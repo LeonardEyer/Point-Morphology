@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.10)
+project(point-morphology)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+
+include_directories(inc)
+file(GLOB SOURCES "src/*.cpp")
+
+add_executable(point-morphology ${SOURCES})
+
+
+include(FetchContent)
+
+FetchContent_Declare(
+   polyscope
+   GIT_REPOSITORY https://github.com/nmwsharp/polyscope.git
+   GIT_TAG        v2.5.0
+)
+
+FetchContent_MakeAvailable(polyscope)
+target_link_libraries(point-morphology polyscope)
+
+
