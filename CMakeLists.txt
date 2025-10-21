@@ -24,8 +24,15 @@ FetchContent_Declare(
    GIT_TAG        v2.6.0
 )
 
-FetchContent_MakeAvailable(polyscope)
-FetchContent_MakeAvailable(libigl)
+FetchContent_Declare(
+   happly
+   GIT_REPOSITORY https://github.com/nmwsharp/happly.git
+   GIT_TAG        v1.0.0
+)
+
+FetchContent_MakeAvailable(polyscope libigl happly)
+
+target_include_directories(point-morphology PUBLIC ${happly_SOURCE_DIR})
 
 target_link_libraries(point-morphology polyscope Eigen3::Eigen)
 
