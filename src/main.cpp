@@ -11,19 +11,42 @@
 struct PointSetSurface {
   using Position = glm::vec3;
   using Normal = glm::vec3;
-  using Sample = std::pair<Position, Normal>;
 
-  std::vector<Position> samples;
+  std::vector<Position> positions;
+  std::vector<Normal> normals;
 
   PointSetSurface(std::string filename) {
     happly::PLYData plyIn(filename);
 
     const auto &vertices = plyIn.getVertexPositions();
-
-    samples.reserve(vertices.size());
+    positions.reserve(vertices.size());
     std::transform(vertices.begin(), vertices.end(),
-                   std::back_inserter(samples),
+                   std::back_inserter(positions),
                    [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
+
+    // --- Load normals if present ---
+    try {
+      std::vector<double> nxs =
+          plyIn.getElement("vertex").getProperty<double>("nx");
+      std::vector<double> nys =
+          plyIn.getElement("vertex").getProperty<double>("ny");
+      std::vector<double> nzs =
+          plyIn.getElement("vertex").getProperty<double>("nz");
+
+      normals.reserve(nxs.size());
+
+      for (auto i = 0; i < nxs.size(); i++) {
+        normals.emplace_back(nxs[i], nys[i], nzs[i]);
+      }
+
+    } catch (...) {
+      std::cout << "No normals found in PLY file.\n";
+    }
+
+    std::cout << "Loaded " << positions.size() << " positions";
+    if (!normals.empty())
+      std::cout << " with normals";
+    std::cout << ".\n";
   }
 };
 
@@ -82,7 +105,10 @@ int main() {
 
   const auto hand = PointSetSurface("./resources/hand.ply");
 
-  auto *handCloud = polyscope::registerPointCloud("hand", hand.samples);
+  auto *handCloud =
+      polyscope::registerPointCloud("hand positions", hand.positions);
+
+  handCloud->addVectorQuantity("normals", hand.normals);
 
   handCloud->setPointRadius(0.0002);
   handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
