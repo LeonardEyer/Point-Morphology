@@ -10,7 +10,6 @@ file(GLOB SOURCES "src/*.cpp")
 
 add_executable(point-morphology ${SOURCES})
 
-
 include(FetchContent)
 
 FetchContent_Declare(
@@ -19,7 +18,15 @@ FetchContent_Declare(
    GIT_TAG        v2.5.0
 )
 
+FetchContent_Declare(
+   libigl
+   GIT_REPOSITORY https://github.com/libigl/libigl.git
+   GIT_TAG        v2.6.0
+)
+
 FetchContent_MakeAvailable(polyscope)
-target_link_libraries(point-morphology polyscope)
+FetchContent_MakeAvailable(libigl)
+
+target_link_libraries(point-morphology polyscope Eigen3::Eigen)
 
 
