@@ -1,10 +1,31 @@
+#include <algorithm>
 #include <glm/geometric.hpp>
+#include <happly.h>
 #include <polyscope/implicit_helpers.h>
 #include <polyscope/point_cloud.h>
 #include <polyscope/polyscope.h>
 #include <polyscope/types.h>
 #include <polyscope/utilities.h>
 #include <polyscope/volume_grid.h>
+
+struct PointSetSurface {
+  using Position = glm::vec3;
+  using Normal = glm::vec3;
+  using Sample = std::pair<Position, Normal>;
+
+  std::vector<Position> samples;
+
+  PointSetSurface(std::string filename) {
+    happly::PLYData plyIn(filename);
+
+    const auto &vertices = plyIn.getVertexPositions();
+
+    samples.reserve(vertices.size());
+    std::transform(vertices.begin(), vertices.end(),
+                   std::back_inserter(samples),
+                   [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
+  }
+};
 
 auto torusSDF = [](glm::vec3 p) {
   // TODO: Make a generator for different values of t
@@ -59,7 +80,14 @@ int main() {
   // Initialize polyscope
   polyscope::init();
 
-  addVolumeGrid();
+  const auto hand = PointSetSurface("./resources/hand.ply");
+
+  auto *handCloud = polyscope::registerPointCloud("hand", hand.samples);
+
+  handCloud->setPointRadius(0.0002);
+  handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
+
+  // addVolumeGrid();
 
   polyscope::state::userCallback = callback;
 
