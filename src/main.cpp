@@ -7,6 +7,30 @@
 #include <polyscope/types.h>
 #include <polyscope/utilities.h>
 #include <polyscope/volume_grid.h>
+#include <stdexcept>
+
+std::vector<glm::vec3> getVertexNormals(happly::PLYData &plyIn) {
+
+  auto normals = std::vector<glm::vec3>{};
+    try {
+      std::vector<double> nxs =
+          plyIn.getElement("vertex").getProperty<double>("nx");
+      std::vector<double> nys =
+          plyIn.getElement("vertex").getProperty<double>("ny");
+      std::vector<double> nzs =
+          plyIn.getElement("vertex").getProperty<double>("nz");
+
+      normals.reserve(nxs.size());
+
+      for (auto i = 0; i < nxs.size(); i++) {
+        normals.emplace_back(nxs[i], nys[i], nzs[i]);
+      }
+
+    } catch (...) {
+      throw std::runtime_error("PLY data does not contain normals");
+    }
+    return normals;
+}
 
 struct PointSetSurface {
   using Position = glm::vec3;
@@ -24,31 +48,10 @@ struct PointSetSurface {
                    std::back_inserter(positions),
                    [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
 
-    // --- Load normals if present ---
-    try {
-      std::vector<double> nxs =
-          plyIn.getElement("vertex").getProperty<double>("nx");
-      std::vector<double> nys =
-          plyIn.getElement("vertex").getProperty<double>("ny");
-      std::vector<double> nzs =
-          plyIn.getElement("vertex").getProperty<double>("nz");
-
-      normals.reserve(nxs.size());
-
-      for (auto i = 0; i < nxs.size(); i++) {
-        normals.emplace_back(nxs[i], nys[i], nzs[i]);
-      }
-
-    } catch (...) {
-      std::cout << "No normals found in PLY file.\n";
-    }
-
-    std::cout << "Loaded " << positions.size() << " positions";
-    if (!normals.empty())
-      std::cout << " with normals";
-    std::cout << ".\n";
+    normals = getVertexNormals(plyIn);
   }
 };
+
 
 auto torusSDF = [](glm::vec3 p) {
   // TODO: Make a generator for different values of t
