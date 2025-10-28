@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <glm/geometric.hpp>
 #include <happly.h>
+#include <nanoflann.hpp>
 #include <polyscope/implicit_helpers.h>
 #include <polyscope/point_cloud.h>
 #include <polyscope/polyscope.h>
@@ -33,6 +34,8 @@ std::vector<glm::vec3> getVertexNormals(happly::PLYData &plyIn) {
 }
 
 struct PointCloud {
+  using coord_t = float;
+
   using Position = glm::vec3;
   using Normal = glm::vec3;
 
@@ -48,14 +51,48 @@ struct PointCloud {
                    std::back_inserter(positions),
                    [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
 
-    normals = getVertexNormals(plyIn);    
+    normals = getVertexNormals(plyIn);
+  }
+};
+
+// And this is the "dataset to kd-tree" adaptor class:
+template <typename Derived> struct PointCloudAdaptor {
+  using coord_t = typename Derived::coord_t;
+
+  const Derived &obj; //!< A const ref to the data set origin
+
+  /// The constructor that sets the data set source
+  PointCloudAdaptor(const Derived &obj_) : obj(obj_) {}
+
+  /// CRTP helper method
+  inline const Derived &derived() const { return obj; }
+
+  // Must return the number of data points
+  inline size_t kdtree_get_point_count() const {
+    return derived().positions.size();
+  }
+
+  // Returns the dim'th component of the idx'th point in the class:
+  inline coord_t kdtree_get_pt(const size_t idx, const size_t dim) const {
+    if (dim == 0)
+      return derived().positions[idx].x;
+    else if (dim == 1)
+      return derived().positions[idx].y;
+    else
+      return derived().positions[idx].z;
+  }
+
+  // Optional bounding-box computation: return false to default to a standard
+  // bbox computation loop.
+  template <class BBOX> bool kdtree_get_bbox(BBOX & /*bb*/) const {
+    return false;
   }
 };
 
 struct PointStructuringElement {
 
   using Position = glm::vec3;
-  using SDF = std::function<float(const Position&)>;
+  using SDF = std::function<float(const Position &)>;
 
   float s;    // scale
   Position c; // center
@@ -64,7 +101,9 @@ struct PointStructuringElement {
   PointStructuringElement(float _s, Position _c, SDF _B)
       : s(_s), c(_c), B(_B) {};
 
-  float operator()(const Position &x) const noexcept { return s * B((x - c) / s); }
+  float operator()(const Position &x) const noexcept {
+    return s * B((x - c) / s);
+  }
 };
 
 auto sphereSDF = [](const glm::vec3 &p) { return glm::length(p) - 1.0f; };
@@ -99,19 +138,6 @@ void addVolumeGrid() {
   qNode->setIsosurfaceVizEnabled(true);
 }
 
-void callback() {
-  if (ImGui::Button("add implicits")) {
-    polyscope::ImplicitRenderOpts opts;
-    polyscope::ImplicitRenderMode mode =
-        polyscope::ImplicitRenderMode::SphereMarch;
-    opts.subsampleFactor = 2; // downsample the rendering
-
-    // render the implicit isosurface from the current viewport
-    polyscope::DepthRenderImageQuantity *img =
-        polyscope::renderImplicitSurface("torus sdf", torusSDF, mode, opts);
-  }
-}
-
 int main() {
 
   // Options
@@ -124,6 +150,34 @@ int main() {
 
   const auto hand = PointCloud("./resources/hand.ply");
 
+  using PC2KD = PointCloudAdaptor<PointCloud>;
+  const PC2KD pc2kd(hand); // The adaptor
+                           // construct a kd-tree index:
+  using my_kd_tree_t = nanoflann::KDTreeSingleIndexAdaptor<
+      nanoflann::L2_Simple_Adaptor<float, PC2KD>, PC2KD, 3 /* dim */
+      >;
+
+  std::cout << "Build kdtree" << std::endl;
+  my_kd_tree_t index(3, pc2kd);
+
+  const auto neighoursInRadius = [&index](const auto &p, const auto radius) {
+    const auto search_radius = static_cast<float>(radius);
+    std::vector<nanoflann::ResultItem<uint32_t, float>> ret_matches;
+    float query_pt[3] = {p.x, p.y, p.z};
+
+    const size_t nMatches =
+        index.radiusSearch(&query_pt[0], search_radius, ret_matches);
+
+    return ret_matches;
+  };
+  std::cout << "Collecting neighbours" << std::endl;
+  auto result = neighoursInRadius(glm::vec3(0.5, 0.5, 0.5), 3.5f);
+
+  std::cout << "Collected " << result.size()  << " neighbours" << std::endl;
+  // for (const auto &r : result) {
+  //   std::cout << "result(" << r.first << ", " << r.second << ")" << std::endl;
+  // }
+
   auto *handCloud =
       polyscope::registerPointCloud("hand positions", hand.positions);
 
@@ -133,8 +187,6 @@ int main() {
   handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
 
   // addVolumeGrid();
-
-  polyscope::state::userCallback = callback;
 
   polyscope::show();
 }
