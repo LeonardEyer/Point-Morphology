@@ -30,10 +30,18 @@ FetchContent_Declare(
    GIT_TAG        v1.0.0
 )
 
-FetchContent_MakeAvailable(polyscope libigl happly)
+FetchContent_Declare(
+   nanoflann
+   GIT_REPOSITORY https://github.com/jlblancoc/nanoflann.git
+   GIT_TAG        v1.7.1
+)
+
+set(NANOFLANN_BUILD_EXAMPLES OFF)
+
+FetchContent_MakeAvailable(polyscope libigl happly nanoflann)
 
 target_include_directories(point-morphology PUBLIC ${happly_SOURCE_DIR})
 
-target_link_libraries(point-morphology polyscope Eigen3::Eigen)
+target_link_libraries(point-morphology polyscope Eigen3::Eigen nanoflann::nanoflann)
 
 
