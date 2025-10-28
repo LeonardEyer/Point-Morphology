@@ -32,14 +32,14 @@ std::vector<glm::vec3> getVertexNormals(happly::PLYData &plyIn) {
   return normals;
 }
 
-struct PointSetSurface {
+struct PointCloud {
   using Position = glm::vec3;
   using Normal = glm::vec3;
 
   std::vector<Position> positions;
   std::vector<Normal> normals;
 
-  PointSetSurface(std::string filename) {
+  PointCloud(std::string filename) {
     happly::PLYData plyIn(filename);
 
     const auto &vertices = plyIn.getVertexPositions();
@@ -48,7 +48,7 @@ struct PointSetSurface {
                    std::back_inserter(positions),
                    [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
 
-    normals = getVertexNormals(plyIn);
+    normals = getVertexNormals(plyIn);    
   }
 };
 
@@ -122,7 +122,7 @@ int main() {
   // Initialize polyscope
   polyscope::init();
 
-  const auto hand = PointSetSurface("./resources/hand.ply");
+  const auto hand = PointCloud("./resources/hand.ply");
 
   auto *handCloud =
       polyscope::registerPointCloud("hand positions", hand.positions);
