@@ -1,4 +1,6 @@
+#include "APSS.hpp"
 #include "PointCloud.hpp"
+#include "glm/ext/vector_float3.hpp"
 #include <nanoflann.hpp>
 #include <polyscope/implicit_helpers.h>
 #include <polyscope/point_cloud.h>
@@ -33,11 +35,11 @@ auto torusSDF = [](const glm::vec3 &p) {
   return glm::length(q) - t.y;
 };
 
-void addVolumeGrid() {
+template <typename SDFFunc> void addVolumeGrid(const SDFFunc &sdf) {
 
-  uint32_t dimX = 50;
-  uint32_t dimY = 50;
-  uint32_t dimZ = 50;
+  uint32_t dimX = 100;
+  uint32_t dimY = 100;
+  uint32_t dimZ = 100;
 
   glm::vec3 bound_low{-3., -3., -3.};
   glm::vec3 bound_high{3., 3., 3.};
@@ -48,7 +50,7 @@ void addVolumeGrid() {
   psGrid->setEdgeWidth(1.0);
 
   polyscope::VolumeGridNodeScalarQuantity *qNode =
-      psGrid->addNodeScalarQuantityFromCallable("torus sdf node", torusSDF);
+      psGrid->addNodeScalarQuantityFromCallable("sdf node", sdf);
   qNode->setEnabled(true);
 
   qNode->setGridcubeVizEnabled(false);
@@ -68,25 +70,20 @@ int main() {
 
   const auto hand = PointCloud("./resources/hand.ply");
 
-  std::cout << "Collecting neighbours" << std::endl;
-
-  auto result = hand.neighboursInRadius(glm::vec3(0.5, 0.5, 0.5), 3.5f);
-
-  std::cout << "Collected " << result.size() << " neighbours" << std::endl;
-  // for (const auto &r : result) {
-  //   std::cout << "result(" << r.first << ", " << r.second << ")" <<
-  //   std::endl;
-  // }
+  const auto apss = APSS(hand);
 
   auto *handCloud =
       polyscope::registerPointCloud("hand positions", hand.positions);
 
   handCloud->addVectorQuantity("normals", hand.normals);
-
   handCloud->setPointRadius(0.0002);
   handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
 
-  // addVolumeGrid();
+  const auto apssSDF = [&apss](const glm::vec3 &p) {
+    return apss.evaluate_surface(p + glm::vec3(2.5, 2.5, 2.5), 2.f);
+  };
+
+  addVolumeGrid(apssSDF);
 
   polyscope::show();
 }

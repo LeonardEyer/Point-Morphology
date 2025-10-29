@@ -42,6 +42,11 @@ struct Vec3Adaptor {
 
   inline size_t kdtree_get_point_count() const { return pts.size(); }
   inline coord_t kdtree_get_pt(size_t idx, int dim) const {
+    if (idx >= pts.size())
+      std::cout << idx << ", " << pts.size() << std::endl;
+    assert(idx < pts.size());
+    assert(dim < 3);
+
     return pts[idx][dim];
   }
   template <class BBOX> bool kdtree_get_bbox(BBOX &) const { return false; }
@@ -86,10 +91,30 @@ struct PointCloud {
                                  float radius) const noexcept {
     std::vector<nanoflann::ResultItem<uint32_t, Scalar>> results;
 
-    float query_p[3] = {p.x, p.y, p.z};
+    Scalar query_p[3] = {p.x, p.y, p.z};
 
     kdTree->radiusSearch(&query_p[0], radius, results);
 
+    return results;
+  }
+
+  inline auto knn(const Position &p, size_t k) const noexcept {
+
+    std::vector<uint32_t> ret_indexes(k);
+    std::vector<Scalar> out_dists_sqr(k);
+
+    nanoflann::KNNResultSet<double> resultSet(k);
+
+    Scalar query_pt[3] = {p.x, p.y, p.z};
+
+    auto num_results =
+        kdTree->knnSearch(&query_pt[0], k, &ret_indexes[0], &out_dists_sqr[0]);
+    assert(num_results == k);
+
+    std::vector<std::pair<uint32_t, Scalar>> results(k);
+    for (auto i = 0; i < k; i++) {
+      results[i] = std::make_pair(ret_indexes[i], out_dists_sqr[i]);
+    }
     return results;
   }
 };
