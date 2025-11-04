@@ -3,6 +3,7 @@
 #include "PointCloud.hpp"
 #include <Eigen/Dense>
 #include <glm/glm.hpp>
+#include <limits>
 
 struct APSS {
   const PointCloud &pointCloud;
@@ -13,12 +14,20 @@ struct APSS {
     const float beta = 1.0f;
 
     static const auto phi = [](const auto &x) -> float {
-      return x >= 1 ? 0 : std::pow(1 - std::pow(x, 2), 4);
+      return x >= 1 ? 0 : std::pow(1 - x, 4);
     };
 
-    static const auto weight = [h](const auto &norm) { return phi(norm / h); };
+    // reference to h
+    const auto weight = [&h](const auto &norm) {
+      return phi(norm / h);
+    };
 
-    const auto neighbours = pointCloud.knn(x, 5);
+    auto neighbours = pointCloud.getWeightedPoints(x, 5, weight);
+
+    while (neighbours.empty()) {
+      h *= 2;
+      neighbours = pointCloud.getWeightedPoints(x, 5, weight);
+    }
 
     // Weighted sums initialization
     float Sw = 0.0f;
@@ -31,15 +40,14 @@ struct APSS {
     auto Swn = glm::vec3(0);
 
     // First pass: accumulate Sw and Swp
-    for (const auto &[i, norm] : neighbours) {
-      auto w = weight(norm);
+    for (const auto &[i, w] : neighbours) {
       Sw += w;
       Swp += w * pointCloud.positions[i];
     }
 
     // Second pass: accumulate remaining sums
-    for (const auto &[i, norm] : neighbours) {
-      auto w = weight(norm);
+    for (const auto &[i, w] : neighbours) {
+     
       auto &n = pointCloud.normals[i];
       auto &p = pointCloud.positions[i];
 

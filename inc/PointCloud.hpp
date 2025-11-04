@@ -1,11 +1,17 @@
 #pragma once
 
+#include "glm/ext/vector_float3.hpp"
+#include "glm/gtc/constants.hpp"
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <glm/vec3.hpp>
 #include <happly.h>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <nanoflann.hpp>
+#include <numeric>
 #include <stdexcept>
 #include <vector>
 
@@ -32,6 +38,33 @@ inline std::vector<glm::vec3> getVertexNormals(happly::PLYData &plyIn) {
     throw std::runtime_error("PLY data does not contain normals");
   }
   return normals;
+}
+
+using Bounds = std::pair<glm::vec3, glm::vec3>;
+
+inline Bounds computeBoundingBox(const std::vector<glm::vec3> &points, float scaling = 1.0f) {
+  auto min = glm::vec3(std::numeric_limits<float>::infinity());
+  auto max = glm::vec3(-std::numeric_limits<float>::infinity());
+
+  for (const auto &p : points) {
+    min = glm::vec3(std::min(min.x, p.x), std::min(min.y, p.y),
+                    std::min(min.z, p.z));
+    max = glm::vec3(std::max(max.x, p.x), std::max(max.y, p.y),
+                    std::max(max.z, p.z));
+  }
+
+  return Bounds(min * scaling, max * scaling);
+}
+
+inline std::vector<glm::vec3> center(const std::vector<glm::vec3> &points) {
+  auto mean = std::reduce(points.cbegin(), points.cend(), glm::vec3(0.0)) /
+              static_cast<float>(points.size());
+
+  auto centerd_points = std::vector<glm::vec3>{};
+  std::ranges::transform(points, std::back_inserter(centerd_points),
+                         [&mean](auto &p) { return p - mean; });
+
+  return centerd_points;
 }
 
 struct Vec3Adaptor {
@@ -82,6 +115,8 @@ struct PointCloud {
 
     normals = detail::getVertexNormals(plyIn);
 
+    positions = detail::center(positions);
+    
     // KDTree construction
     adaptor = std::make_unique<Adaptor>(positions);
     kdTree = std::make_unique<KDTree>(3, *adaptor);
@@ -103,7 +138,7 @@ struct PointCloud {
     std::vector<uint32_t> ret_indexes(k);
     std::vector<Scalar> out_dists_sqr(k);
 
-    nanoflann::KNNResultSet<double> resultSet(k);
+    nanoflann::KNNResultSet<float> resultSet(k);
 
     Scalar query_pt[3] = {p.x, p.y, p.z};
 
@@ -117,4 +152,21 @@ struct PointCloud {
     }
     return results;
   }
+
+  template <typename WeightFunc>
+  inline auto getWeightedPoints(const Position &p, size_t k,
+                                const WeightFunc &weightFunc) const {
+
+    auto weightedResult = std::vector<std::pair<size_t, float>>();
+
+    for (const auto &[i, norm] : knn(p, k)) {
+      auto weight = weightFunc(norm);
+      if (weight > 10.0 * std::numeric_limits<float>::epsilon()) {
+	weightedResult.push_back(std::make_pair(i, weight));
+      }
+    }
+
+    return weightedResult;
+  }
+  
 };

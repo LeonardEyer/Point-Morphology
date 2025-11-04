@@ -35,17 +35,15 @@ auto torusSDF = [](const glm::vec3 &p) {
   return glm::length(q) - t.y;
 };
 
-template <typename SDFFunc> void addVolumeGrid(const SDFFunc &sdf) {
+template <typename SDFFunc>
+void addVolumeGrid(const detail::Bounds &bounds, const SDFFunc &sdf) {
 
   uint32_t dimX = 100;
   uint32_t dimY = 100;
   uint32_t dimZ = 100;
 
-  glm::vec3 bound_low{-3., -3., -3.};
-  glm::vec3 bound_high{3., 3., 3.};
-
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
-      "test grid", {dimX, dimY, dimZ}, bound_low, bound_high);
+      "test grid", {dimX, dimY, dimZ}, bounds.first, bounds.second);
 
   psGrid->setEdgeWidth(1.0);
 
@@ -56,6 +54,13 @@ template <typename SDFFunc> void addVolumeGrid(const SDFFunc &sdf) {
   qNode->setGridcubeVizEnabled(false);
   qNode->setIsosurfaceLevel(0.0);
   qNode->setIsosurfaceVizEnabled(true);
+}
+
+void drawPointCloud(const PointCloud &p) {
+  auto *handCloud = polyscope::registerPointCloud("positions", p.positions);
+  handCloud->addVectorQuantity("normals", p.normals);
+  handCloud->setPointRadius(0.0002);
+  handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
 }
 
 int main() {
@@ -69,21 +74,15 @@ int main() {
   polyscope::init();
 
   const auto hand = PointCloud("./resources/hand.ply");
-
   const auto apss = APSS(hand);
 
-  auto *handCloud =
-      polyscope::registerPointCloud("hand positions", hand.positions);
-
-  handCloud->addVectorQuantity("normals", hand.normals);
-  handCloud->setPointRadius(0.0002);
-  handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
+  auto bounds = detail::computeBoundingBox(hand.positions, 1.2);
 
   const auto apssSDF = [&apss](const glm::vec3 &p) {
-    return apss.evaluate_surface(p + glm::vec3(2.5, 2.5, 2.5), 2.f);
+    return apss.evaluate_surface(p, 5.f);
   };
 
-  addVolumeGrid(apssSDF);
+  addVolumeGrid(bounds, apssSDF);
 
   polyscope::show();
 }
