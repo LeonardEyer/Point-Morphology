@@ -1,10 +1,7 @@
 #pragma once
 
-#include "glm/ext/vector_float3.hpp"
-#include "glm/gtc/constants.hpp"
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <glm/vec3.hpp>
 #include <happly.h>
 #include <iterator>
@@ -42,9 +39,10 @@ inline std::vector<glm::vec3> getVertexNormals(happly::PLYData &plyIn) {
 
 using Bounds = std::pair<glm::vec3, glm::vec3>;
 
-inline Bounds computeBoundingBox(const std::vector<glm::vec3> &points, float scaling = 1.0f) {
-  auto min = glm::vec3(std::numeric_limits<float>::infinity());
-  auto max = glm::vec3(-std::numeric_limits<float>::infinity());
+inline Bounds computeBoundingBox(const std::vector<glm::vec3> &points,
+                                 float scaling = 1.0f) {
+  auto min = glm::vec3(std::numeric_limits<float>::max());
+  auto max = glm::vec3(-std::numeric_limits<float>::max());
 
   for (const auto &p : points) {
     min = glm::vec3(std::min(min.x, p.x), std::min(min.y, p.y),
@@ -75,8 +73,9 @@ struct Vec3Adaptor {
 
   inline size_t kdtree_get_point_count() const { return pts.size(); }
   inline coord_t kdtree_get_pt(size_t idx, int dim) const {
-    if (idx >= pts.size())
-      std::cout << idx << ", " << pts.size() << std::endl;
+    if (idx >= pts.size()) {
+      throw std::runtime_error("Out of bounds kdtree access");
+     }      
     assert(idx < pts.size());
     assert(dim < 3);
 
@@ -94,7 +93,7 @@ struct PointCloud {
   using Normal = glm::vec3;
 
   using Adaptor = detail::Vec3Adaptor;
-  using KDTree = nanoflann::KDTreeSingleIndexAdaptor<
+  using KDTree = nanoflann::KDTreeSingleIndexDynamicAdaptor<
       nanoflann::L2_Simple_Adaptor<float, Adaptor>, Adaptor, 3 /* dim */
       >;
 
@@ -114,42 +113,74 @@ struct PointCloud {
                    [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
 
     normals = detail::getVertexNormals(plyIn);
-
     positions = detail::center(positions);
-    
+
     // KDTree construction
     adaptor = std::make_unique<Adaptor>(positions);
     kdTree = std::make_unique<KDTree>(3, *adaptor);
   }
 
-  inline auto neighboursInRadius(const Position &p,
-                                 float radius) const noexcept {
-    std::vector<nanoflann::ResultItem<uint32_t, Scalar>> results;
+  PointCloud() {
+    // KDTree construction
+    adaptor = std::make_unique<Adaptor>(positions);
+    kdTree = std::make_unique<KDTree>(3, *adaptor);
+  }
+
+  inline auto insertPoint(const Position &p, const Normal &n) {
+    positions.push_back(p);
+    normals.push_back(n);
+    const auto newIndex = positions.size() - 1;
+    kdTree->addPoints(newIndex, newIndex);
+  }
+
+  inline auto neighboursInRadius(const Position &p, float radius,
+                                 bool sorted = true) const noexcept {
 
     Scalar query_p[3] = {p.x, p.y, p.z};
 
-    kdTree->radiusSearch(&query_p[0], radius, results);
+    const auto searchParams = nanoflann::SearchParameters(0, sorted);
+
+    const Scalar radiusSqr = radius * radius;
+
+    std::vector<nanoflann::ResultItem<size_t, Scalar>> results;
+    nanoflann::RadiusResultSet<Scalar, size_t> resultSet(radiusSqr,
+                                                         results);
+    kdTree->findNeighbors(resultSet, query_p, searchParams);
+
+    // The point is not its own neighbour
+    if (not results.empty() && positions[results[0].first] == p) {
+      std::cout << "myself" << std::endl;
+      results.erase(results.begin());
+    }
 
     return results;
   }
 
-  inline auto knn(const Position &p, size_t k) const noexcept {
+  inline auto knn(const Position &p, size_t k,
+                  bool sorted = true) const noexcept {
 
-    std::vector<uint32_t> ret_indexes(k);
+    std::vector<size_t> ret_indexes(k);
     std::vector<Scalar> out_dists_sqr(k);
 
     nanoflann::KNNResultSet<float> resultSet(k);
 
     Scalar query_pt[3] = {p.x, p.y, p.z};
+    const auto searchParams = nanoflann::SearchParameters(0, sorted);
 
-    auto num_results =
-        kdTree->knnSearch(&query_pt[0], k, &ret_indexes[0], &out_dists_sqr[0]);
-    assert(num_results == k);
+    resultSet.init(&ret_indexes[0], &out_dists_sqr[0]);
+
+    kdTree->findNeighbors(resultSet, query_pt, searchParams);
 
     std::vector<std::pair<uint32_t, Scalar>> results(k);
     for (auto i = 0; i < k; i++) {
       results[i] = std::make_pair(ret_indexes[i], out_dists_sqr[i]);
     }
+
+    // Remove oneself from neighbours
+    if (not results.empty() && positions[results[0].first] == p) {
+      results.erase(results.begin());
+    }
+
     return results;
   }
 
@@ -162,11 +193,44 @@ struct PointCloud {
     for (const auto &[i, norm] : knn(p, k)) {
       auto weight = weightFunc(norm);
       if (weight > 10.0 * std::numeric_limits<float>::epsilon()) {
-	weightedResult.push_back(std::make_pair(i, weight));
+        weightedResult.push_back(std::make_pair(i, weight));
       }
     }
 
     return weightedResult;
   }
-  
+
+  inline auto maximum_point_spacing() const noexcept {
+    float max_spacing = 0;
+
+    for (const auto &p : positions) {
+      const auto [_, dist] = knn(p, 2)[1];
+      max_spacing = std::max(max_spacing, dist);
+    }
+
+    return max_spacing;
+  }
+
+  inline auto minimum_point_spacing() const noexcept {
+    float min_spacing = std::numeric_limits<float>::max();
+
+    for (const auto &p : positions) {
+      const auto [_, dist] = knn(p, 2)[1];
+      min_spacing = std::min(min_spacing, dist);
+    }
+
+    return min_spacing;
+  }
+
+  inline auto average_point_spacing() const noexcept {
+    float avg_spacing = 0;
+    for (const auto &p : positions) {
+      const auto [_, dist] = knn(p, 2)[1];
+      avg_spacing += dist;
+    }
+    avg_spacing /= (positions.size() * 2);
+    return avg_spacing;
+  }
+
+  inline auto poisson_disk_subsample() noexcept {}
 };
