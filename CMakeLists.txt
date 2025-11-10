@@ -3,6 +3,10 @@ project(point-morphology)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(FETCHCONTENT_QUIET FALSE)
+
+# Release build: optimize aggressively
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -ffast-math")
 
 
 include_directories(inc)
@@ -43,5 +47,3 @@ FetchContent_MakeAvailable(polyscope libigl happly nanoflann)
 target_include_directories(point-morphology PUBLIC ${happly_SOURCE_DIR})
 
 target_link_libraries(point-morphology polyscope Eigen3::Eigen nanoflann::nanoflann)
-
-
