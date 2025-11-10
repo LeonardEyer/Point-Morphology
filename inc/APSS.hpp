@@ -18,9 +18,7 @@ struct APSS {
     };
 
     // reference to h
-    const auto weight = [&h](const auto &norm) {
-      return phi(norm / h);
-    };
+    const auto weight = [&h](const auto &norm) { return phi(norm / h); };
 
     auto neighbours = pointCloud.getWeightedPoints(x, 5, weight);
 
@@ -47,7 +45,7 @@ struct APSS {
 
     // Second pass: accumulate remaining sums
     for (const auto &[i, w] : neighbours) {
-     
+
       auto &n = pointCloud.normals[i];
       auto &p = pointCloud.positions[i];
 
@@ -59,7 +57,7 @@ struct APSS {
     }
 
     // assert(Sw != 0.0f);
-     
+
     // Compute coefficients
     const float denom = Sw * Swpp - SwpSwp;
     float u_d1 = 0.0f;
@@ -80,12 +78,12 @@ struct APSS {
       sdval = std::fabs(glm::length(c - x) - r);
     } else {
       // Degenerate case: plane
-      //std::cout << "Degenerate case" << std::endl;
+      // std::cout << "Degenerate case" << std::endl;
       sdval = std::fabs(glm::dot(x, u_mid) + u0) / glm::length(u_mid);
     }
 
     // Algebraic surface value (negative interior)
-    float apssval = -1.0 * (u0 + glm::dot(x, u_mid) + glm::dot(x, x) * u_d1);
+    float apssval = 1.0 * (u0 + glm::dot(x, u_mid) + glm::dot(x, x) * u_d1);
 
     // Assign correct sign
     return std::copysign(sdval, apssval);

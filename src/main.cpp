@@ -1,6 +1,6 @@
 #include "APSS.hpp"
 #include "PointCloud.hpp"
-#include "glm/ext/vector_float3.hpp"
+#include "Subsample.hpp"
 #include <nanoflann.hpp>
 #include <polyscope/implicit_helpers.h>
 #include <polyscope/point_cloud.h>
@@ -36,19 +36,41 @@ auto torusSDF = [](const glm::vec3 &p) {
 };
 
 template <typename SDFFunc>
-void addVolumeGrid(const detail::Bounds &bounds, const SDFFunc &sdf) {
+void addVolumeGrid(const detail::Bounds &bounds, const SDFFunc &sdf,
+                   const size_t resolution = 50) {
 
-  uint32_t dimX = 100;
-  uint32_t dimY = 100;
-  uint32_t dimZ = 100;
+  uint32_t dimX = resolution;
+  uint32_t dimY = resolution;
+  uint32_t dimZ = resolution;
+
+  std::vector<float> values(dimX * dimY * dimZ);
+
+  const auto xSpacing = (bounds.second.x - bounds.first.x) / (dimX - 1);
+  const auto ySpacing = (bounds.second.y - bounds.first.y) / (dimY - 1);
+  const auto zSpacing = (bounds.second.z - bounds.first.z) / (dimZ - 1);
+
+  for (int ix = 0; ix < dimX; ++ix) {
+    for (int iy = 0; iy < dimY; ++iy) {
+      for (int iz = 0; iz < dimZ; ++iz) {
+        auto p = glm::vec3(bounds.first.x + ix * xSpacing,
+                           bounds.first.y + iy * ySpacing,
+                           bounds.first.z + iz * zSpacing);
+
+        const size_t idx = static_cast<size_t>(iz) * dimY * dimX +
+                           static_cast<size_t>(iy) * dimX +
+                           static_cast<size_t>(ix);
+
+        values[idx] = sdf(p);
+      }
+    }
+  }
 
   polyscope::VolumeGrid *psGrid = polyscope::registerVolumeGrid(
       "test grid", {dimX, dimY, dimZ}, bounds.first, bounds.second);
-
   psGrid->setEdgeWidth(1.0);
 
   polyscope::VolumeGridNodeScalarQuantity *qNode =
-      psGrid->addNodeScalarQuantityFromCallable("sdf node", sdf);
+      psGrid->addNodeScalarQuantity("sdf node", values);
   qNode->setEnabled(true);
 
   qNode->setGridcubeVizEnabled(false);
@@ -74,15 +96,30 @@ int main() {
   polyscope::init();
 
   const auto hand = PointCloud("./resources/hand.ply");
-  const auto apss = APSS(hand);
+  const auto handSubsampled = poissonDiskSubsample(hand, .01f);
+  std::cout << "Reduction = "
+            << handSubsampled.positions.size() /
+                   static_cast<float>(hand.positions.size())
+            << std::endl;
 
-  auto bounds = detail::computeBoundingBox(hand.positions, 1.2);
+  const auto apss = APSS(handSubsampled);
+  const auto max_spacing = handSubsampled.maximum_point_spacing();
+  const auto avg_spacing = handSubsampled.average_point_spacing();
+  const auto min_spacing = handSubsampled.minimum_point_spacing();
 
-  const auto apssSDF = [&apss](const glm::vec3 &p) {
-    return apss.evaluate_surface(p, 5.f);
+  std::cout << "max spacing: " << max_spacing << std::endl;
+  std::cout << "avg spacing: " << avg_spacing << std::endl;
+  std::cout << "min spacing: " << min_spacing << std::endl;
+
+  auto bounds = detail::computeBoundingBox(handSubsampled.positions, 1.2);
+
+  const auto apssSDF = [&apss, max_spacing](const glm::vec3 &p) {
+    return apss.evaluate_surface(p, .5f);
   };
 
-  addVolumeGrid(bounds, apssSDF);
+  addVolumeGrid(bounds, apssSDF, 100);
+
+  std::cout << "Done" << std::endl;
 
   polyscope::show();
 }
