@@ -14,7 +14,7 @@ struct APSS {
     const float beta = 1.0f;
 
     static const auto phi = [](const auto &x) -> float {
-      return x >= 1 ? 0 : std::pow(1 - x, 4);
+      return x >= 1 ? 0 : std::pow(1 - x * x, 4);
     };
 
     // reference to h
@@ -56,7 +56,7 @@ struct APSS {
       Swn += w * n;
     }
 
-    // assert(Sw != 0.0f);
+    assert(Sw != 0.0f);
 
     // Compute coefficients
     const float denom = Sw * Swpp - SwpSwp;
