@@ -91,10 +91,13 @@ int main() {
   auto bounds = detail::computeBoundingBox(handSubsampled.positions, 1.2);
 
   const auto apssSDF = [&apss](const glm::vec3 &p) {
-    return apss.evaluate_surface(p, .5f);
+    const auto fitted = apss.fit(p, .5f);
+
+    return std::visit([&p](const auto &fit) { return distance(fit, p); },
+                      fitted);
   };
 
-  addVolumeGrid(bounds, apssSDF, 100);
+  addVolumeGrid(bounds, apssSDF, 50);
 
   std::cout << "Done" << std::endl;
   polyscope::show();
