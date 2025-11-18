@@ -1,6 +1,7 @@
 
 #include "APSS.hpp"
 #include "PointCloud.hpp"
+#include "Resample.hpp"
 #include "Subsample.hpp"
 
 #include <nanoflann.hpp>
@@ -80,18 +81,21 @@ int main() {
   polyscope::init();
 
   const auto hand = PointCloud("./resources/hand.ply");
-  const auto handSubsampled = poissonDiskSubsample(hand, .01f);
+  auto handSubsampled = poissonDiskSubsample(hand, .1f);
   std::cout << "Reduction = "
-            << handSubsampled.positions.size() /
-                   static_cast<float>(hand.positions.size())
+            << 1.0f - handSubsampled.positions.size() /
+                          static_cast<float>(hand.positions.size())
             << std::endl;
+
+  log_point_cloud_stats(handSubsampled);
+  resample(handSubsampled, .8f, 1u);
 
   const auto apss = APSS(handSubsampled);
 
   auto bounds = detail::computeBoundingBox(handSubsampled.positions, 1.2);
 
   const auto apssSDF = [&apss](const glm::vec3 &p) {
-    const auto fitted = apss.fit(p, .5f);
+    const auto fitted = apss.fit(p, 1.0f);
 
     return std::visit([&p](const auto &fit) { return distance(fit, p); },
                       fitted);
