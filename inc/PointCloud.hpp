@@ -75,7 +75,7 @@ struct Vec3Adaptor {
   inline coord_t kdtree_get_pt(size_t idx, int dim) const {
     if (idx >= pts.size()) {
       throw std::runtime_error("Out of bounds kdtree access");
-     }      
+    }
     assert(idx < pts.size());
     assert(dim < 3);
 
@@ -100,7 +100,9 @@ struct PointCloud {
   std::vector<Position> positions;
   std::vector<Normal> normals;
 
+  // adaptor will hold a const ref to our data points
   std::unique_ptr<Adaptor> adaptor;
+  // kdtree is used for fast indexing on the adaptor data
   std::unique_ptr<KDTree> kdTree;
 
   PointCloud(std::string filename) {
@@ -133,6 +135,8 @@ struct PointCloud {
     kdTree->addPoints(newIndex, newIndex);
   }
 
+  inline auto deletePoint(size_t index) { kdTree->removePoint(index); }
+
   inline auto neighboursInRadius(const Position &p, float radius,
                                  bool sorted = true) const noexcept {
 
@@ -143,13 +147,13 @@ struct PointCloud {
     const Scalar radiusSqr = radius * radius;
 
     std::vector<nanoflann::ResultItem<size_t, Scalar>> results;
-    nanoflann::RadiusResultSet<Scalar, size_t> resultSet(radiusSqr,
-                                                         results);
+    nanoflann::RadiusResultSet<Scalar, size_t> resultSet(radiusSqr, results);
     kdTree->findNeighbors(resultSet, query_p, searchParams);
 
     // The point is not its own neighbour
     if (not results.empty() && positions[results[0].first] == p) {
-      std::cout << "myself" << std::endl;
+      // std::cout << "myself" << std::endl;
+      // std::cout << "neighbours = " << results.size() << std::endl;
       results.erase(results.begin());
     }
 
@@ -204,32 +208,32 @@ struct PointCloud {
     float max_spacing = 0;
 
     for (const auto &p : positions) {
-      const auto [_, dist] = knn(p, 2)[1];
+      const auto [_, dist] = knn(p, 2)[0];
       max_spacing = std::max(max_spacing, dist);
     }
 
-    return max_spacing;
+    return std::sqrt(max_spacing);
   }
 
   inline auto minimum_point_spacing() const noexcept {
     float min_spacing = std::numeric_limits<float>::max();
 
     for (const auto &p : positions) {
-      const auto [_, dist] = knn(p, 2)[1];
+      const auto [_, dist] = knn(p, 2)[0];
       min_spacing = std::min(min_spacing, dist);
     }
 
-    return min_spacing;
+    return std::sqrt(min_spacing);
   }
 
   inline auto average_point_spacing() const noexcept {
     float avg_spacing = 0;
     for (const auto &p : positions) {
-      const auto [_, dist] = knn(p, 2)[1];
+      const auto [_, dist] = knn(p, 2)[0];
       avg_spacing += dist;
     }
     avg_spacing /= (positions.size() * 2);
-    return avg_spacing;
+    return std::sqrt(avg_spacing);
   }
 
   inline auto poisson_disk_subsample() noexcept {}
