@@ -13,14 +13,18 @@ inline double sqDist(const glm::vec3 &a, const glm::vec3 &b) noexcept {
 
 inline double kernel(double dist2) noexcept { return std::exp(-dist2); }
 
-inline double takeInverseIterative(const glm::vec3 &xPos,
-                                   const glm::vec3 &xNorm,
-                                   const PointCloud &cloud,
-                                   const std::vector<size_t> &neighborIndices,
-                                   double threshold) {
+struct KernelInverseResult {
+  double s;          // weight
+  Eigen::MatrixXd K; // inverted kernel matrix K^{-1}
+  Eigen::VectorXd k; // kernel values from point to each neighbour
+};
+
+inline KernelInverseResult takeInverseIterative(
+    const glm::vec3 &xPos, const glm::vec3 &xNorm, const PointCloud &cloud,
+    const std::vector<size_t> &neighborIndices, double threshold) {
   const int num = static_cast<int>(neighborIndices.size());
   if (num <= 0)
-    return 0.0;
+    return {0.0};
 
   Eigen::MatrixXd Kn = Eigen::MatrixXd::Zero(num, num);
   Eigen::VectorXd kx = Eigen::VectorXd::Zero(num);
@@ -31,11 +35,13 @@ inline double takeInverseIterative(const glm::vec3 &xPos,
   double p = 0.0;
 
   auto sqDistVM = [&](int idx) {
-    return sqDist(xPos, cloud.positions[idx]) + sqDist(xNorm, cloud.normals[idx]);
+    return sqDist(xPos, cloud.positions[idx]) +
+           sqDist(xNorm, cloud.normals[idx]);
   };
 
   auto sqDistMM = [&](int i, int j) {
-    return sqDist(cloud.positions[i], cloud.positions[j]) + sqDist(cloud.normals[i], cloud.normals[j]);
+    return sqDist(cloud.positions[i], cloud.positions[j]) +
+           sqDist(cloud.normals[i], cloud.normals[j]);
   };
 
   // Initialize first point
@@ -78,5 +84,5 @@ inline double takeInverseIterative(const glm::vec3 &xPos,
     p += error;
   }
 
-  return p;
+  return {p, Kn, kx};
 }

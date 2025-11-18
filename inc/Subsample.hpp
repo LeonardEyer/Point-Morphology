@@ -23,7 +23,8 @@ inline auto poissonDiskSubsample(const PointCloud &cloud, double distance,
     double reconErr = 1.0;
     if (!neighborIndices.empty()) {
       reconErr =
-          1.0 - takeInverseIterative(p, n, sampled, neighborIndices, threshold);
+          1.0 -
+          takeInverseIterative(p, n, sampled, neighborIndices, threshold).s;
     }
 
     if (reconErr > threshold) {
