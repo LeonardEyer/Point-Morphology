@@ -4,13 +4,13 @@
 #include "InverseIterative.hpp"
 #include "PointCloud.hpp"
 
-inline void resample(PointCloud &cloud, double gaussianStd = 0.2,
+inline void resample(PointCloud &cloud, double gaussianStd, double sigmaP,
                      size_t iterations = 10) {
 
-  double radius = gaussianStd * gaussianStd;
-  std::cout << "resampling with radius of " << radius << std::endl;
   auto apss = APSS(cloud);
   auto nPoints = cloud.positions.size();
+  static const auto sigma = 1.0f;
+  static double radius = gaussianStd * gaussianStd;
 
   for (auto iter = 0; iter < iterations; ++iter) {
     for (auto i = 0; i < nPoints; ++i) {
@@ -22,11 +22,13 @@ inline void resample(PointCloud &cloud, double gaussianStd = 0.2,
       auto &p = cloud.positions[i];
       auto &n = cloud.normals[i];
 
-      auto neighbours = cloud.neighboursInRadius(p, radius);
+      auto neighbours = cloud.neighboursInRadius(p, gaussianStd * sigmaP);
 
-      assert(!neighbours.empty());
+      if (neighbours.empty()) {
+        std::cout << "No neighbours. skipping" << std::endl;
+        continue;
+      }
 
-      // std::cout << "neighbours: " << neighbours.size() << std::endl;
       std::vector<size_t> neighbourIndices;
       for (auto &[idx, _] : neighbours)
         neighbourIndices.push_back(idx);
@@ -59,7 +61,7 @@ inline void resample(PointCloud &cloud, double gaussianStd = 0.2,
           }
         }
 
-        return (2 / (gaussianStd * gaussianStd)) * gradient;
+        return (2 / sigma) * gradient;
       }();
 
       // gradient step
