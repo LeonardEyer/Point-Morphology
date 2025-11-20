@@ -117,9 +117,11 @@ struct PointCloud {
     normals = detail::getVertexNormals(plyIn);
     positions = detail::center(positions);
 
+    auto params = nanoflann::KDTreeSingleIndexAdaptorParams();
+    params.leaf_max_size = 2;
     // KDTree construction
     adaptor = std::make_unique<Adaptor>(positions);
-    kdTree = std::make_unique<KDTree>(3, *adaptor);
+    kdTree = std::make_unique<KDTree>(3, *adaptor, params);
   }
 
   PointCloud(const std::vector<Position> &_positions,
@@ -127,9 +129,11 @@ struct PointCloud {
     positions = detail::center(_positions);
     normals = _normals;
 
+    auto params = nanoflann::KDTreeSingleIndexAdaptorParams();
+    params.leaf_max_size = 2;
     // KDTree construction
     adaptor = std::make_unique<Adaptor>(positions);
-    kdTree = std::make_unique<KDTree>(3, *adaptor);
+    kdTree = std::make_unique<KDTree>(3, *adaptor, params);
   }
 
   PointCloud() {
@@ -162,8 +166,6 @@ struct PointCloud {
 
     // The point is not its own neighbour
     if (not results.empty() && positions[results[0].first] == p) {
-      // std::cout << "myself" << std::endl;
-      // std::cout << "neighbours = " << results.size() << std::endl;
       results.erase(results.begin());
     }
 
@@ -245,6 +247,12 @@ struct PointCloud {
     avg_spacing /= (positions.size() * 2);
     return std::sqrt(avg_spacing);
   }
-
-  inline auto poisson_disk_subsample() noexcept {}
 };
+
+inline PointCloud extrude(const PointCloud &p, float factor) {
+  auto extrudedPoints = p.positions;
+  for (auto i = 0; i < extrudedPoints.size(); i++) {
+    extrudedPoints[i] += factor * p.normals[i];
+  }
+  return PointCloud(extrudedPoints, p.normals);
+}
