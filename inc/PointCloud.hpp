@@ -122,6 +122,16 @@ struct PointCloud {
     kdTree = std::make_unique<KDTree>(3, *adaptor);
   }
 
+  PointCloud(const std::vector<Position> &_positions,
+             const std::vector<Normal> &_normals) {
+    positions = detail::center(_positions);
+    normals = _normals;
+
+    // KDTree construction
+    adaptor = std::make_unique<Adaptor>(positions);
+    kdTree = std::make_unique<KDTree>(3, *adaptor);
+  }
+
   PointCloud() {
     // KDTree construction
     adaptor = std::make_unique<Adaptor>(positions);
