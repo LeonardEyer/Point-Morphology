@@ -102,11 +102,11 @@ struct APSS {
     // reference to h
     const auto weight = [&h](const auto &norm) { return phi(norm / h); };
 
-    auto neighbours = pointCloud.getWeightedPoints(x, 5, weight);
+    auto neighbours = pointCloud.getWeightedPoints(x, 20, weight);
 
     while (neighbours.empty()) {
-      h *= 2;
-      neighbours = pointCloud.getWeightedPoints(x, 5, weight);
+      h *= 1.5;
+      neighbours = pointCloud.getWeightedPoints(x, 20, weight);
     }
 
     // Weighted sums initialization
@@ -144,7 +144,7 @@ struct APSS {
     const float denom = Sw * Swpp - SwpSwp;
     float u_d1 = 0.0f;
 
-    if (std::fabs(denom) >= 10.0f * std::numeric_limits<float>::epsilon()) {
+    if (std::fabs(denom) >= std::numeric_limits<float>::epsilon()) {
       u_d1 = beta * 0.5f * ((Sw * Swnp - SwnSwp) / denom);
     }
 
@@ -153,7 +153,7 @@ struct APSS {
 
     FitParams params{u0, u_mid, u_d1};
 
-    if (std::fabs(u_d1) > 0.0f) {
+    if (std::fabs(u_d1) > 1e-4f) {
       return SphereFitResult(params);
     } else {
       return PlaneFitResult(params);
