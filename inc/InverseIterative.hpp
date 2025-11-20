@@ -13,6 +13,10 @@ inline double sqDist(const glm::vec3 &a, const glm::vec3 &b) noexcept {
 
 inline double kernel(double dist2) noexcept { return std::exp(-dist2); }
 
+inline auto concat(const glm::vec3 &a, const glm::vec3 &b) {
+  return Eigen::Vector<float, 6>{a.x, a.y, a.z, b.x, b.y, b.z};
+}
+
 struct KernelInverseResult {
   double s;          // weight
   Eigen::MatrixXd K; // inverted kernel matrix K^{-1}
@@ -22,6 +26,11 @@ struct KernelInverseResult {
 inline KernelInverseResult takeInverseIterative(
     const glm::vec3 &xPos, const glm::vec3 &xNorm, const PointCloud &cloud,
     const std::vector<size_t> &neighborIndices, double threshold) {
+
+  // we want to compute s(x) = 1 − k^T K^{-1} k / k(x,x)
+  // by iteratively inverting K
+  // x := [p / sigma_p, n / sigma_n] // point plus normal normalized
+
   const int num = static_cast<int>(neighborIndices.size());
   if (num <= 0)
     return {0.0};
@@ -35,13 +44,15 @@ inline KernelInverseResult takeInverseIterative(
   double p = 0.0;
 
   auto sqDistVM = [&](int idx) {
-    return sqDist(xPos, cloud.positions[idx]) +
-           sqDist(xNorm, cloud.normals[idx]);
+    auto x = concat(xPos, xNorm);
+    auto xi = concat(cloud.positions[idx], cloud.normals[idx]);
+    return (x - xi).squaredNorm();
   };
 
   auto sqDistMM = [&](int i, int j) {
-    return sqDist(cloud.positions[i], cloud.positions[j]) +
-           sqDist(cloud.normals[i], cloud.normals[j]);
+    auto xi = concat(cloud.positions[i], cloud.normals[i]);
+    auto xj = concat(cloud.positions[j], cloud.normals[j]);
+    return (xi - xj).squaredNorm();
   };
 
   // Initialize first point
