@@ -4,14 +4,15 @@
 #include "PointCloud.hpp"
 
 inline auto poissonDiskSubsample(const PointCloud &cloud, double distance,
-                                 double threshold = 0.5) {
+                                 float sigmaP = 1.0f, float sigmaN = 1.0f,
+                                 float eps = 0.5) {
   // empty pointcloud
   PointCloud sampled;
 
   for (size_t i = 0; i < cloud.positions.size(); ++i) {
 
-    glm::vec3 p = cloud.positions[i]; // / static_cast<float>(sigmaP);
-    glm::vec3 n = cloud.normals[i];   // / static_cast<float>(sigmaN);
+    glm::vec3 p = cloud.positions[i] / sigmaP;
+    glm::vec3 n = cloud.normals[i] / sigmaN;
 
     // we get sorted neighbours
     auto neighbors = sampled.neighboursInRadius(p, distance);
@@ -20,17 +21,25 @@ inline auto poissonDiskSubsample(const PointCloud &cloud, double distance,
     for (auto &[idx, _] : neighbors)
       neighborIndices.push_back(idx);
 
-    double reconErr = 1.0;
+    double s = 1.0;
     if (!neighborIndices.empty()) {
-      reconErr =
-          1.0 -
-          takeInverseIterative(p, n, sampled, neighborIndices, threshold).s;
+      s = 1.0 - takeInverseIterative(p, n, sampled, neighborIndices, eps).s;
     }
 
-    if (reconErr > threshold) {
+    if (s > eps) {
       sampled.insertPoint(p, n);
     }
   }
+
+  for (auto i = 0; i < sampled.positions.size(); i++) {
+    sampled.positions[i] *= sigmaP;
+    sampled.normals[i] *= sigmaN;
+  }
+
+  std::cout << "Reduction = "
+            << 1.0f - sampled.positions.size() /
+                          static_cast<float>(cloud.positions.size())
+            << std::endl;
 
   return sampled;
 }
