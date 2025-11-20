@@ -1,6 +1,7 @@
 
 #include "APSS.hpp"
 #include "PointCloud.hpp"
+#include "PointStructuringElement.hpp"
 #include "Resample.hpp"
 #include "Subsample.hpp"
 
@@ -57,9 +58,16 @@ void addVolumeGrid(const detail::Bounds &bounds, const SDFFunc &sdf,
   qNode->setIsosurfaceVizEnabled(true);
 }
 
-void drawPointCloud(const PointCloud &p) {
-  auto *handCloud = polyscope::registerPointCloud("positions", p.positions);
+void drawPointCloud(std::string name, const PointCloud &p) {
+  auto *handCloud = polyscope::registerPointCloud(name, p.positions);
   handCloud->addVectorQuantity("normals", p.normals);
+  handCloud->setPointRadius(0.002);
+  handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
+}
+
+void drawPointCloud(std::string name,
+                    const std::vector<PointCloud::Position> &p) {
+  auto *handCloud = polyscope::registerPointCloud(name, p);
   handCloud->setPointRadius(0.002);
   handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
 }
@@ -124,16 +132,93 @@ void log_point_cloud_stats(const PointCloud &cloud) {
   std::cout << "min spacing: " << min_spacing << std::endl;
 }
 
-float cubeSDF(const glm::vec3 &p) {
-  const auto b = glm::vec3(0.5f);
-  glm::vec3 d = glm::abs(p) - b; // distance along each axis
-  float outsideDist =
-      glm::length(glm::max(d, glm::vec3(0.0f))); // distance outside cube
-  float insideDist =
-      std::min(std::max(d.x, std::max(d.y, d.z)), 0.0f); // negative inside
-  return outsideDist + insideDist;
-}
+std::vector<glm::vec3> sampleBoxSurface(const detail::Bounds &bounds,
+                                        int numSamples) {
+  std::vector<glm::vec3> samples;
 
+  glm::vec3 min = bounds.first;
+  glm::vec3 max = bounds.second;
+
+  // Compute box dimensions
+  glm::vec3 size = max - min;
+
+  // Approximate samples per edge
+  int samplesPerEdge =
+      std::ceil(std::cbrt(numSamples / 3.0f)); // rough cube root
+
+  // Loop over faces (6 faces)
+  for (int face = 0; face < 6; ++face) {
+    for (int i = 0; i < samplesPerEdge; ++i) {
+      for (int j = 0; j < samplesPerEdge; ++j) {
+        float u = i / float(samplesPerEdge - 1);
+        float v = j / float(samplesPerEdge - 1);
+
+        glm::vec3 point;
+
+        switch (face) {
+        case 0:
+          point = glm::vec3(min.x, min.y + u * size.y, min.z + v * size.z);
+          break; // left
+        case 1:
+          point = glm::vec3(max.x, min.y + u * size.y, min.z + v * size.z);
+          break; // right
+        case 2:
+          point = glm::vec3(min.x + u * size.x, min.y, min.z + v * size.z);
+          break; // bottom
+        case 3:
+          point = glm::vec3(min.x + u * size.x, max.y, min.z + v * size.z);
+          break; // top
+        case 4:
+          point = glm::vec3(min.x + u * size.x, min.y + v * size.y, min.z);
+          break; // back
+        case 5:
+          point = glm::vec3(min.x + u * size.x, min.y + v * size.y, max.z);
+          break; // front
+        }
+
+        samples.push_back(point);
+
+        if (samples.size() >= numSamples) {
+          return samples; // stop early if we reached target
+        }
+      }
+    }
+  }
+
+  return samples;
+}
+std::vector<glm::vec3> sampleBoxVolume(const detail::Bounds &bounds,
+                                       int numSamples) {
+  std::vector<glm::vec3> samples;
+
+  glm::vec3 min = bounds.first;
+  glm::vec3 max = bounds.second;
+
+  glm::vec3 size = max - min;
+
+  // Compute the number of points along each axis
+  int pointsPerAxis =
+      std::ceil(std::cbrt(float(numSamples))); // cube root for volume
+  if (pointsPerAxis < 1)
+    pointsPerAxis = 1;
+
+  glm::vec3 step = size / float(pointsPerAxis - 1); // spacing between points
+
+  for (int x = 0; x < pointsPerAxis; ++x) {
+    for (int y = 0; y < pointsPerAxis; ++y) {
+      for (int z = 0; z < pointsPerAxis; ++z) {
+        glm::vec3 point = min + glm::vec3(x, y, z) * step;
+        samples.push_back(point);
+
+        if (samples.size() >= numSamples) {
+          return samples; // stop early if we reached target
+        }
+      }
+    }
+  }
+
+  return samples;
+}
 float point_spacing = 0.002f;
 float sigmaP = 1.0f;
 float sigmaN = 1.0f;
@@ -145,7 +230,6 @@ int main() {
   polyscope::view::windowWidth = 1024;
   polyscope::view::windowHeight = 1024;
   polyscope::init();
-
 #ifdef SUBSAMPLE
   {
     const auto cloud = readNOFF("./resources/cube.txt");
@@ -156,14 +240,13 @@ int main() {
   }
 #endif
 
-  const auto cloud = readNOFF("./resources/cube-sampled.txt");
+  const auto cloud = readNOFF("./resources/hand.noff");
 
   // // resample(handSubsampled, gaussianStd * gaussianStd, 1u);
 
-  drawPointCloud(cloud);
+  drawPointCloud("cloud", cloud);
 
   const auto apss = APSS(cloud);
-
   auto bounds = detail::computeBoundingBox(cloud.positions, 1.2);
 
   const auto apssSDF = [&apss](const glm::vec3 &p) {
@@ -173,7 +256,60 @@ int main() {
                       fitted);
   };
 
-  addVolumeGrid(bounds, apssSDF, gridResolution);
+  // for dilation we create a initial sampling of the dilation surface by going
+  // scale away from the surface
+  const auto scale = 0.5f; // point_spacing * 5;
+
+  // const auto extruded = sampleBoxSurface(bounds, 3000000);
+  // const auto extruded = extrude(cloud, scale * 1.1).positions;
+  const auto extruded = sampleBoxVolume(bounds, 300000);
+  drawPointCloud("extruded", extruded);
+
+  auto dilated = extruded;
+  // now we want to project the extruded points down onto the dilation
+  auto start = std::chrono::high_resolution_clock::now();
+  auto end = start;
+  for (auto i = 0; i < dilated.size(); i++) {
+
+    if (i % 100000 == 0) {
+      end = std::chrono::high_resolution_clock::now();
+      std::cout << "Progress = " << i / static_cast<float>(dilated.size())
+                << ", Duration = "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                         start)
+                       .count()
+                << " ms" << std::endl;
+      start = std::chrono::high_resolution_clock::now();
+    }
+
+    auto &p = dilated[i];
+
+    // now we iteratively project
+    p = structuring_elements::project_iterative(
+        apss, p, structuring_elements::sdf::cube, scale);
+  }
+
+  drawPointCloud("dilated", dilated);
+  std::cout << "Projection done" << std::endl;
+  // const auto dilationSDF = [&pss = apss, scale](const auto &p) {
+  //   const auto fitted = pss.fit(p, scale);
+
+  //   auto signed_distance =
+  //       std::visit([&p](const auto &fit) { return distance(fit, p); },
+  //       fitted);
+
+  //   // check if we are inside the apss
+  //   auto inside = signed_distance < 0;
+
+  //   if (std::abs(signed_distance) < scale) {
+  //     // we are to close to the surface project away
+  //   }
+
+  //   const auto pse = structuring_elements::fit(pss, p, sdf, scale);
+  //   return pse.distance(p);
+  // };
+
+  // addVolumeGrid(bounds, apssSDF, gridResolution);
   std::cout << "Done" << std::endl;
 
   polyscope::show();
