@@ -2,6 +2,7 @@
 
 #include "APSS.hpp"
 #include "PointCloud.hpp"
+#include "glm/geometric.hpp"
 #include <cassert>
 #include <functional>
 #include <glm/glm.hpp>
@@ -68,8 +69,6 @@ inline PointStructuringElement fit(const APSS &pss,
                                    const PointStructuringElement::SDF &sdf,
                                    float scale) {
 
-  // We assume that this point is far enough away from our surface
-
   // We aim to minimize (9)
 
   // 1. collect a point sampling PI of the implicit surface
@@ -79,7 +78,7 @@ inline PointStructuringElement fit(const APSS &pss,
 
   // 2. initialize mean shift with n (usually 2) meaningful points
   // {c_j^0} := {closest points in PI under PSE distance}
-  const auto candidate = [&] {
+  const auto cj0 = [&] {
     std::vector<std::pair<float, size_t>> distances;
     distances.reserve(neighbours.size());
     for (const auto &[idx, _] : neighbours) {
@@ -87,12 +86,22 @@ inline PointStructuringElement fit(const APSS &pss,
       auto pse = PointStructuringElement{scale, xi, sdf};
       distances.emplace_back(pse.distance(x), idx);
     }
+
+    // we are looking at the 2 most meaningful points
+    auto nth = 2;
     std::ranges::nth_element(
-        distances, distances.begin() + 1,
+        distances, distances.begin() + nth - 1,
         [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
-    return PointStructuringElement{
-        scale, pss.pointCloud.positions[distances.front().second], sdf};
+
+    auto cjs = std::vector<size_t>(nth);
+    for (auto i = 0; i < nth; i++) {
+      cjs[i] = distances[i].second;
+    }
+    return cjs;
   }();
+
+  auto candidate =
+      PointStructuringElement{scale, pss.pointCloud.positions[cj0[0]], sdf};
 
   return candidate;
   // TODO mean shift
@@ -104,7 +113,31 @@ inline PointCloud::Position project(const PointStructuringElement &pse,
   return p - pse.distance(p) * pse.gradient(p);
 }
 
+enum Operation { Dilation, Erosion };
+
+template <Operation op>
+PointCloud::Position shift(const PointStructuringElement &,
+                           const PointCloud::Position &, bool);
+
+template <>
 inline PointCloud::Position
+shift<Operation::Dilation>(const PointStructuringElement &pse,
+                           const PointCloud::Position &p, bool inside) {
+
+  if (!inside) {
+    return p;
+  }
+
+  auto distance = pse.c - p;
+  auto e_m = pse.s * 1.2f;
+
+  auto delta = e_m * glm::normalize(distance);
+
+  return p + delta;
+}
+
+template <Operation op>
+std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x,
                   const PointStructuringElement::SDF &sdf, float scale) {
 
@@ -112,7 +145,17 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
   static constexpr auto maxIter = 100;
 
   const auto P = [&pss, &sdf, scale](const auto &p) {
-    return project(fit(pss, p, sdf, scale), p);
+    // pss_fit
+    // auto pss_fit = pss.fit(p, 0.01f);
+
+    auto fitted = fit(pss, p, sdf, scale);
+
+    // compute indicator function for shift procedure
+    // TODO: Speed up indicator function computation
+    auto inside = pss.evaluate_surface(p, 0.01f) <= 0;
+
+    // shift then project
+    return project(fitted, shift<op>(fitted, p, inside));
   };
 
   auto xi = x;
@@ -129,7 +172,11 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
     xip1 = P(xip1);
   }
 
-  return xip1;
+  auto fitted = fit(pss, xip1, sdf, scale);
+
+  auto normal = fitted.gradient(xip1);
+
+  return {xip1, normal};
 }
 
 } // namespace structuring_elements
