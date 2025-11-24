@@ -115,7 +115,6 @@ struct PointCloud {
                    [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
 
     normals = detail::getVertexNormals(plyIn);
-    positions = detail::center(positions);
 
     auto params = nanoflann::KDTreeSingleIndexAdaptorParams();
     params.leaf_max_size = 2;
@@ -126,7 +125,7 @@ struct PointCloud {
 
   PointCloud(const std::vector<Position> &_positions,
              const std::vector<Normal> &_normals) {
-    positions = detail::center(_positions);
+    positions = _positions;
     normals = _normals;
 
     auto params = nanoflann::KDTreeSingleIndexAdaptorParams();
