@@ -1,4 +1,3 @@
-
 #include "APSS.hpp"
 #include "PointCloud.hpp"
 #include "PointStructuringElement.hpp"
@@ -124,9 +123,9 @@ PointCloud readNOFF(std::string in) {
 
 void log_point_cloud_stats(const PointCloud &cloud) {
 
-  const auto max_spacing = cloud.maximum_point_spacing();
-  const auto avg_spacing = cloud.average_point_spacing();
-  const auto min_spacing = cloud.minimum_point_spacing();
+  const auto max_spacing = maximum_point_spacing(cloud);
+  const auto avg_spacing = average_point_spacing(cloud);
+  const auto min_spacing = minimum_point_spacing(cloud);
 
   std::cout << "max spacing: " << max_spacing << std::endl;
   std::cout << "avg spacing: " << avg_spacing << std::endl;
@@ -323,7 +322,7 @@ int main() {
     dilated_normals[i] = n;
   }
   auto dilatedPointCloud = PointCloud(dilated_points, dilated_normals);
-  // dilatedPointCloud = poissonDiskSubsample(dilatedPointCloud, 0.1f);
+  dilatedPointCloud = poissonDiskSubsample(dilatedPointCloud, 0.1f);
 
   drawPointCloud("dilated", dilatedPointCloud);
   std::cout << "Projection done" << std::endl;
@@ -343,12 +342,7 @@ int main() {
     }
     auto sel = polyscope::getSelection();
 
-    ImGui::Text("Selected point <%llu>", sel.localIndex);
-
-    if (ImGui::Button("Do action")) {
-
-      std::cout << sel.position.x << ", " << sel.position.y << ", "
-                << sel.position.z << std::endl;
+    if (ImGui::Button("Show PSE centroid")) {
 
       auto fitted = structuring_elements::fit(
           apss, sel.position, structuring_elements::sdf::sphere, pse_scale);
@@ -358,6 +352,7 @@ int main() {
 
       auto quant = psCloud->addVectorQuantity(
           "distance", std::vector{sel.position - fitted.c});
+
       quant->setEnabled(true);
       quant->setVectorLengthScale(glm::distance(fitted.c, sel.position), false);
       psCloud->setPointRadius(0.02);

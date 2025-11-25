@@ -43,18 +43,18 @@ struct PointStructuringElement {
   PointStructuringElement(float _s, Position _c, SDF _B)
       : s(_s), c(_c), B(_B) {};
 
-  float distance(const Position &x) const noexcept {
+  [[nodiscard]] float distance(const Position &x) const noexcept {
     return s * B((x - c) / s);
   }
 
-  Position gradient(const Position &x) const noexcept {
+  [[nodiscard]] Position gradient(const Position &x) const noexcept {
     // approximation of gradient (for now)
-    const float eps = 1e-4f; // adjust if necessary
+    constexpr float eps = 1e-4f; // adjust if necessary
 
     // basis
-    const Position ex(eps, 0, 0);
-    const Position ey(0, eps, 0);
-    const Position ez(0, 0, eps);
+    constexpr Position ex(eps, 0, 0);
+    constexpr Position ey(0, eps, 0);
+    constexpr Position ez(0, 0, eps);
 
     float dx = (distance(x + ex) - distance(x - ex)) / (2.0f * eps);
     float dy = (distance(x + ey) - distance(x - ey)) / (2.0f * eps);
@@ -72,9 +72,9 @@ inline PointStructuringElement fit(const APSS &pss,
   // We aim to minimize (9)
 
   // 1. collect a point sampling PI of the implicit surface
-  const auto neighbours = pss.pointCloud.knn(x, 2);
+  const auto neighbours = pss.pointCloud.tree->knn(x, 2);
 
-  assert(neighbours.size() > 2);
+  assert(neighbours.size() == 2);
 
   // 2. initialize mean shift with n (usually 2) meaningful points
   // {c_j^0} := {closest points in PI under PSE distance}

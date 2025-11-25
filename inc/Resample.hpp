@@ -22,7 +22,7 @@ inline void resample(PointCloud &cloud, double gaussianStd, double sigmaP,
       auto &p = cloud.positions[i];
       auto &n = cloud.normals[i];
 
-      auto neighbours = cloud.neighboursInRadius(p, gaussianStd * sigmaP);
+      auto neighbours = cloud.tree->neighboursInRadius(p, gaussianStd * sigmaP);
 
       if (neighbours.empty()) {
         std::cout << "No neighbours. skipping" << std::endl;

@@ -3,9 +3,9 @@
 #include "InverseIterative.hpp"
 #include "PointCloud.hpp"
 
-inline auto poissonDiskSubsample(const PointCloud &cloud, double distance,
-                                 float sigmaP = 1.0f, float sigmaN = 1.0f,
-                                 float eps = 0.5) {
+inline PointCloud poissonDiskSubsample(const PointCloud &cloud, double distance,
+                                       float sigmaP = 1.0f, float sigmaN = 1.0f,
+                                       float eps = 0.5) {
   // empty pointcloud
   PointCloud sampled;
 
@@ -15,7 +15,7 @@ inline auto poissonDiskSubsample(const PointCloud &cloud, double distance,
     glm::vec3 n = cloud.normals[i] / sigmaN;
 
     // we get sorted neighbours
-    auto neighbors = sampled.neighboursInRadius(p, distance);
+    auto neighbors = sampled.tree->neighboursInRadius(p, distance);
 
     std::vector<size_t> neighborIndices;
     for (auto &[idx, _] : neighbors)
