@@ -1,8 +1,10 @@
 #include "APSS.hpp"
+#include "InverseIterative.hpp"
 #include "PointCloud.hpp"
 #include "PointStructuringElement.hpp"
 #include "Resample.hpp"
 #include "Subsample.hpp"
+#include "imgui.h"
 #include "polyscope/pick.h"
 
 #include <fstream>
@@ -65,11 +67,14 @@ void drawPointCloud(std::string name, const PointCloud &p) {
   handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
 }
 
-void drawPointCloud(std::string name,
-                    const std::vector<PointCloud::Position> &p) {
-  auto *handCloud = polyscope::registerPointCloud(name, p);
-  handCloud->setPointRadius(0.002);
-  handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
+auto drawPointCloud(
+    std::string name, const std::vector<PointCloud::Position> &p,
+    polyscope::PointRenderMode mode = polyscope::PointRenderMode::Quad) {
+  auto *cloud = polyscope::registerPointCloud(name, p);
+  cloud->setPointRadius(0.002);
+  cloud->setPointRenderMode(mode);
+
+  return cloud;
 }
 
 void writeNOFF(std::string out, const PointCloud &cloud) {
@@ -251,9 +256,121 @@ std::vector<glm::vec3> sampleBoxVolume(const detail::Bounds &bounds,
 }
 
 float point_spacing = 0.002f;
-float sigmaP = 1.0f;
-float sigmaN = 1.0f;
+float sigmaP = .25f;
+float sigmaN = .5f;
 int gridResolution = 50;
+
+using V6f = Eigen::Vector<float, 6>;
+using PointNormal = V6f;
+
+struct Kernel {
+  Eigen::MatrixXd K; // inverse kernel matrix
+  Eigen::VectorXd k;
+};
+
+PointNormal make6D(const PointCloud::Position &position,
+                   const PointCloud::Normal &normal) {
+  return concat(position / sigmaP, normal / sigmaN);
+}
+
+std::vector<PointNormal>
+make6D(const std::vector<PointCloud::Position> &positions,
+       const std::vector<PointCloud::Normal> &normals) {
+  auto result = std::vector<PointNormal>();
+
+  for (auto i = 0; i < positions.size(); i++) {
+    result.push_back(make6D(positions[i], normals[i]));
+  }
+
+  return result;
+}
+
+template <typename KernelFunc>
+Kernel buildInverseKernelMatrix(const PointNormal &x,
+                                const std::vector<PointNormal> &neighbours,
+                                const KernelFunc &kernelFunc) {
+
+  const auto N = neighbours.size();
+  std::cout << "N = " << N << std::endl;
+  Eigen::MatrixXd K(N, N);
+  Eigen::VectorXd k(N);
+
+  for (auto i = 0; i < N; i++) {
+    k(i) = kernelFunc(x, neighbours[i]);
+  }
+
+  for (auto i = 0; i < N; i++) {
+    for (auto j = 0; j < N; j++) {
+      K(i, j) = kernelFunc(neighbours[i], neighbours[j]);
+    }
+  }
+
+  std::cout << "invert" << std::endl;
+
+  // check if PSD matrix
+
+  std::cout << "k = " << k << std::endl;
+  // std::cout << "K = " << K << std::endl;
+
+  // K = K.inverse();
+  // std::cout << "K^-1 = " << K << std::endl;
+
+  return {K.inverse(), k};
+};
+
+float importance(Kernel kernelResult) {
+  const auto &[K, k] = kernelResult;
+
+  return 1.0 - k.transpose() * K * k;
+};
+
+PointNormal importance_grad(const PointNormal &x,
+                            const std::vector<PointNormal> &neighbours,
+                            Kernel kernelResult, float sigma = 1.0f) {
+
+  auto [K, k] = kernelResult;
+
+  PointNormal sgrad = PointNormal::Zero();
+  for (auto i = 0; i < neighbours.size(); i++) {
+    for (auto j = 0; j < neighbours.size(); j++) {
+
+      const auto &x_i = neighbours[i];
+      const auto &x_j = neighbours[j];
+
+      sgrad += (2 * x - x_i - x_j) * k(i) * k(j) * K(i, j);
+    }
+  }
+  return (-2.0f / sigma * sigma) * sgrad;
+}
+
+PointNormal importance_grad(const PointNormal &x,
+                            const std::vector<PointNormal> &neighbours,
+                            KernelInverseResult kernelResult,
+                            float sigma = 1.0f) {
+
+  auto [_, K, k, active] = kernelResult;
+
+  auto neighboursFiltered = std::vector<PointNormal>();
+  for (auto i = 0; i < neighbours.size(); i++) {
+    if (active[i]) {
+      neighboursFiltered.push_back(neighbours[i]);
+    }
+  }
+
+  PointNormal sgrad = PointNormal::Zero();
+  for (auto i = 0; i < neighboursFiltered.size(); i++) {
+    for (auto j = 0; j < neighboursFiltered.size(); j++) {
+
+      const auto &x_i = neighboursFiltered[i];
+      const auto &x_j = neighboursFiltered[j];
+
+      sgrad += (2 * x - x_i - x_j) * k(i) * k(j) * K(i, j);
+    }
+  }
+  return (-2.0f / sigma * sigma) * sgrad;
+}
+
+glm::vec3 toglm(Eigen::Vector3f x) { return {x.x(), x.y(), x.z()}; }
 
 int main() {
 
@@ -261,15 +378,6 @@ int main() {
   polyscope::view::windowWidth = 1024;
   polyscope::view::windowHeight = 1024;
   polyscope::init();
-#ifdef SUBSAMPLE
-  {
-    const auto cloud = readNOFF("./resources/cube.txt");
-    const auto cloud_subsamled =
-        poissonDiskSubsample(cloud, point_spacing, sigmaP, sigmaN);
-    writeNOFF("./resources/cube-sampled.txt", cloud_subsamled);
-    log_point_cloud_stats(cloud);
-  }
-#endif
 
   const auto cloud = readNOFF("./resources/cube-sampled.txt");
 
@@ -286,7 +394,7 @@ int main() {
                       fitted);
   };
 
-  const auto pse_scale = 0.25f;
+  constexpr auto pse_scale = 0.25f;
   auto bounds = detail::computeBoundingBox(cloud.positions, 2.f + pse_scale);
 
   // const auto extruded = sampleBoxSurface(bounds, 3000000);
@@ -301,7 +409,7 @@ int main() {
   auto end = start;
   for (auto i = 0; i < dilated_points.size(); i++) {
 
-    if (i % 100000 == 0) {
+    if (i != 0 && i % 100000 == 0) {
       end = std::chrono::high_resolution_clock::now();
       std::cout << "Progress = "
                 << i / static_cast<float>(dilated_points.size())
@@ -321,11 +429,18 @@ int main() {
     dilated_points[i] = p;
     dilated_normals[i] = n;
   }
-  auto dilatedPointCloud = PointCloud(dilated_points, dilated_normals);
-  dilatedPointCloud = poissonDiskSubsample(dilatedPointCloud, 0.1f);
 
-  drawPointCloud("dilated", dilatedPointCloud);
+  auto dilatedPointCloud = PointCloud(dilated_points, dilated_normals);
   std::cout << "Projection done" << std::endl;
+  // drawPointCloud("dilated", dilatedPointCloud);
+
+  dilatedPointCloud = poissonDiskSubsample(dilatedPointCloud, 0.05f);
+  std::cout << "subsampling done" << std::endl;
+  drawPointCloud("dilated subsampled", dilatedPointCloud);
+
+  // auto dilatedPointCloud2 = resample(dilatedPointCloud, 0.5, 1.5, 1.25);
+  // std::cout << "resampling done" << std::endl;
+  // drawPointCloud("dilated resampled", dilatedPointCloud2);
 
   auto dilatedPSS = APSS(dilatedPointCloud);
 
@@ -333,14 +448,20 @@ int main() {
     return dilatedPSS.evaluate_surface(p, h);
   };
 
-  addVolumeGrid(bounds, dilatedSDF, gridResolution);
+  // addVolumeGrid(bounds, dilatedSDF, gridResolution);
   std::cout << "Done" << std::endl;
+
+  float radius = 0.5;
 
   polyscope::state::userCallback = [&]() {
     if (!polyscope::haveSelection()) {
       return;
     }
     auto sel = polyscope::getSelection();
+
+    ImGui::InputFloat("radius", &radius);
+    ImGui::InputFloat("sigmaP", &sigmaP);
+    ImGui::InputFloat("sigmaN", &sigmaN);
 
     if (ImGui::Button("Show PSE centroid")) {
 
@@ -356,8 +477,77 @@ int main() {
       quant->setEnabled(true);
       quant->setVectorLengthScale(glm::distance(fitted.c, sel.position), false);
       psCloud->setPointRadius(0.02);
+    }
+    if (ImGui::Button("Show nearest in radius")) {
 
-      // psCloud->setTransparency(0.2);
+      const auto &cloud = dilatedPointCloud;
+
+      auto &p = cloud.positions[sel.localIndex];
+      auto &n = cloud.normals[sel.localIndex];
+
+      auto neighbours = cloud.tree->neighboursInRadius(p, radius);
+
+      if (neighbours.empty()) {
+        std::cout << "No neighbours" << std::endl;
+      }
+
+      auto neighbours_points = std::vector<PointCloud::Position>{};
+      auto neighbours_normals = std::vector<PointCloud::Normal>{};
+      auto neighbours_importance = std::vector<float>{};
+      for (const auto [index, _] : neighbours) {
+        neighbours_points.push_back(cloud.positions[index]);
+        neighbours_normals.push_back(cloud.normals[index]);
+
+        auto importance = kernel6D(
+            make6D(p, n), make6D(cloud.positions[index], cloud.normals[index]));
+
+        neighbours_importance.push_back(importance);
+      }
+
+      auto pointNormal = make6D(p, n);
+      auto neighbours6D = make6D(neighbours_points, neighbours_normals);
+
+      auto kernelResult = takeInverseIterative(pointNormal, neighbours6D);
+      auto s2 = importance(Kernel{kernelResult.K, kernelResult.k});
+      auto s = kernelResult.s;
+
+      // std::cout << "s = " << s << std::endl;
+      // std::cout << "s2 = " << 1.0 - s2 << std::endl;
+
+      {
+        auto nCloud = drawPointCloud("neighbours", neighbours_points,
+                                     polyscope::PointRenderMode::Sphere);
+
+        auto quant = nCloud->addVectorQuantity("normals", neighbours_normals);
+
+        // quant->setEnabled(true);
+        auto importance =
+            nCloud->addScalarQuantity("importance", neighbours_importance)
+                ->setEnabled(true);
+        nCloud->setPointRadiusQuantity("importance");
+        nCloud->setPointRadius(0.02);
+      }
+
+      auto s_grad =
+          0.5f * importance_grad(pointNormal, neighbours6D, kernelResult);
+
+      auto s_grad_p = glm::vec3(s_grad.x(), s_grad.y(), s_grad.z());
+      {
+        auto pCloud = drawPointCloud("point", std::vector{p},
+                                     polyscope::PointRenderMode::Sphere);
+        auto quant = pCloud->addVectorQuantity("s grad", std::vector{s_grad_p});
+        quant->setVectorLengthScale(glm::length(s_grad_p), false);
+        quant->setEnabled(true);
+      }
+
+      {
+
+        auto [pp1, np1] =
+            project_iterative(dilatedPSS, p + toglm(s_grad.head(3)), 0.5, 1);
+
+        auto pCloud = drawPointCloud("update", std::vector{pp1},
+                                     polyscope::PointRenderMode::Sphere);
+      }
     }
   };
 
