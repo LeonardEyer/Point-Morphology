@@ -36,8 +36,8 @@ FetchContent_Declare(
 
 FetchContent_Declare(
    nanoflann
-   GIT_REPOSITORY https://github.com/jlblancoc/nanoflann.git
-   GIT_TAG        v1.7.1
+   GIT_REPOSITORY https://github.com/LeonardEyer/nanoflann.git
+   GIT_TAG     LeonardEyer-fix-dynamic-tree-sorted
 )
 
 set(NANOFLANN_BUILD_EXAMPLES OFF)
