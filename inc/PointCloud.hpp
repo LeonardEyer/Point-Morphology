@@ -93,8 +93,10 @@ struct Vec3Adaptor {
 
   ~Vec3Adaptor() { delete index; }
 
-  inline size_t kdtree_get_point_count() const { return pts.size(); }
-  inline num_t kdtree_get_pt(size_t idx, int dim) const {
+  [[nodiscard]] inline size_t kdtree_get_point_count() const {
+    return pts.size();
+  }
+  [[nodiscard]] inline num_t kdtree_get_pt(size_t idx, int dim) const {
     if (idx >= pts.size()) {
       throw std::runtime_error("Out of bounds kdtree access");
     }
@@ -123,8 +125,7 @@ struct PointKDTree {
     Scalar query_p[3] = {p.x, p.y, p.z};
     std::vector<nanoflann::ResultItem<size_t, Scalar>> results;
 
-    nanoflann::RadiusResultSet<Scalar, size_t> resultSet(radius * radius,
-                                                         results);
+    nanoflann::RadiusResultSet resultSet(radius * radius, results);
     nanoflann::SearchParameters searchParams(0, sorted);
 
     adaptor.index->findNeighbors(resultSet, query_p, searchParams);
@@ -195,6 +196,11 @@ struct PointCloud {
     tree = std::make_unique<PointKDTree>(positions);
   }
 
+  PointCloud(std::vector<Position> &&_positions, std::vector<Normal> &&_normals)
+      : positions(std::move(_positions)), normals(std::move(_normals)) {
+    tree = std::make_unique<PointKDTree>(positions);
+  }
+
   PointCloud() { tree = std::make_unique<PointKDTree>(positions); };
 
   // Delete copy constructor
@@ -202,7 +208,7 @@ struct PointCloud {
   PointCloud &operator=(const PointCloud &other) = delete;
 
   PointCloud(PointCloud &&other) noexcept
-      : PointCloud(std::move(other.positions), std::move(other.normals)) {
+      : PointCloud(other.positions, other.normals) {
     other.tree.reset();
   }
 
@@ -220,6 +226,12 @@ struct PointCloud {
     normals.push_back(n);
     const auto newIndex = positions.size() - 1;
     tree->addPoints(newIndex, newIndex);
+  }
+
+  void updatePoint(size_t index, const Position &p, const Normal &n) {
+    positions[index] = p;
+    normals[index] = n;
+    tree = std::make_unique<PointKDTree>(positions);
   }
 
   void deletePoint(size_t index) { assert(false); }

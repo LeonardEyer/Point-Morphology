@@ -17,15 +17,14 @@ inline PointCloud poissonDiskSubsample(const PointCloud &cloud, double distance,
     // we get sorted neighbours
     auto neighbors = sampled.tree->neighboursInRadius(p, distance);
 
-    std::vector<size_t> neighborIndices;
-    for (auto &[idx, _] : neighbors)
-      neighborIndices.push_back(idx);
-
     double s = 1.0;
-    if (!neighborIndices.empty()) {
+    if (!neighbors.empty()) {
+      std::vector<size_t> neighborIndices;
+      for (auto &[idx, _] : neighbors)
+        neighborIndices.push_back(idx);
+
       s = 1.0 - takeInverseIterative(p, n, sampled, neighborIndices, eps).s;
     }
-
     if (s > eps) {
       sampled.insertPoint(p, n);
     }

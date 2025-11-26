@@ -145,9 +145,6 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
   static constexpr auto maxIter = 100;
 
   const auto P = [&pss, &sdf, scale](const auto &p) {
-    // pss_fit
-    // auto pss_fit = pss.fit(p, 0.01f);
-
     auto fitted = fit(pss, p, sdf, scale);
 
     // compute indicator function for shift procedure
@@ -171,7 +168,7 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
     xi = xip1;
     xip1 = P(xip1);
   }
-
+  // TODO: save a computation by storing the last fit
   auto fitted = fit(pss, xip1, sdf, scale);
 
   auto normal = fitted.gradient(xip1);
