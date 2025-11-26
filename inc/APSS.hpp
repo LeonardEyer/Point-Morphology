@@ -59,18 +59,18 @@ inline constexpr float distance(const PlaneFitResult &fit,
 
 inline PointCloud::Position gradient(const SphereFitResult &fit,
                                      const PointCloud::Position &x) noexcept {
-  glm::vec3 v = x - fit.center;
+  auto v = x - fit.center;
   float len = glm::length(v);
   if (len > 0.0f) {
     return v / len; // unit vector pointing away from center
   } else {
-    return glm::vec3(1.0f, 0.0f, 0.0f); // arbitrary direction
+    return {1.0f, 0.0f, 0.0f}; // arbitrary direction
   }
 }
 
 inline PointCloud::Position gradient(const PlaneFitResult &fit,
                                      const PointCloud::Position &p) noexcept {
-  glm::vec3 n = fit.params.u_mid;
+  auto n = fit.params.u_mid;
   float len = glm::length(n);
   return (len > 0.0f) ? n / len
                       : glm::vec3(1.0f, 0.0f, 0.0f); // arbitrary if degenerate
@@ -165,3 +165,42 @@ struct APSS {
                       fit(x, h));
   }
 };
+
+// TODO: Validate implementaiton. seems to be quite unstable
+inline std::pair<PointCloud::Position, PointCloud::Normal>
+project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
+                  size_t maxIter = 100) {
+  static constexpr auto threshold = 1e-8f;
+
+  const auto P = [&pss, h = scale](const auto &p) {
+    auto fitted = pss.fit(p, h);
+    return std::visit(
+        [&p](const auto &fitvariant) { return project(fitvariant, p); },
+        fitted);
+  };
+
+  auto xi = x;
+  auto xip1 = P(xi);
+
+  for (auto i = 0; i < maxIter; i++) {
+
+    if (glm::distance(xi, xip1) < threshold * threshold) {
+      // converged
+      if (i > 50)
+        std::cout << "converge at " << i << std::endl;
+
+      break;
+    }
+
+    xi = xip1;
+    xip1 = P(xip1);
+  }
+
+  auto fitted = pss.fit(xip1, scale);
+
+  auto normal = std::visit(
+      [&x = xip1](const auto &variant) { return gradient(variant, x); },
+      fitted);
+
+  return {xip1, normal};
+}
