@@ -117,7 +117,7 @@ struct PointKDTree {
 
   Adaptor adaptor;
 
-  PointKDTree(const std::vector<glm::vec3> &points) : adaptor(points) {};
+  PointKDTree(const std::vector<glm::vec3> &points) : adaptor(points, 8) {};
 
   auto neighboursInRadius(const glm::vec3 &p, float radius,
                           bool sorted = true) const {
@@ -201,6 +201,11 @@ struct PointCloud {
     tree = std::make_unique<PointKDTree>(positions);
   }
 
+  void scale(float scaling) {
+    std::transform(positions.begin(), positions.end(), positions.begin(),
+                   [scaling](auto &p) { return p * scaling; });
+  }
+
   PointCloud() { tree = std::make_unique<PointKDTree>(positions); };
 
   // Delete copy constructor
@@ -231,7 +236,10 @@ struct PointCloud {
   void updatePoint(size_t index, const Position &p, const Normal &n) {
     positions[index] = p;
     normals[index] = n;
-    tree = std::make_unique<PointKDTree>(positions);
+
+    tree->adaptor.index->removePoint(index);
+    tree->addPoints(index, index);
+    // tree = std::make_unique<PointKDTree>(positions);
   }
 
   void deletePoint(size_t index) { assert(false); }

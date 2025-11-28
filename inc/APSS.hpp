@@ -1,9 +1,9 @@
 #pragma once
 
 #include "PointCloud.hpp"
-#include "glm/ext/vector_float3.hpp"
 #include <Eigen/Dense>
 #include <glm/glm.hpp>
+#include <glm/gtx/norm.hpp>
 #include <limits>
 #include <variant>
 
@@ -92,7 +92,7 @@ struct APSS {
 
   using FitVariant = std::variant<SphereFitResult, PlaneFitResult>;
 
-  FitVariant fit(const PointCloud::Position &x, float h) const {
+  [[nodiscard]] FitVariant fit(const PointCloud::Position &x, float h) const {
     const float beta = 1.0f;
 
     static const auto phi = [](const auto &x) -> float {
@@ -170,7 +170,7 @@ struct APSS {
 inline std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
                   size_t maxIter = 100) {
-  static constexpr auto threshold = 1e-8f;
+  static constexpr auto eps = 1e-4f;
 
   const auto P = [&pss, h = scale](const auto &p) {
     auto fitted = pss.fit(p, h);
@@ -184,10 +184,11 @@ project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
 
   for (auto i = 0; i < maxIter; i++) {
 
-    if (glm::distance(xi, xip1) < threshold * threshold) {
+    if (glm::distance2(xi, xip1) <= eps) {
       // converged
       if (i > 50)
-        std::cout << "converge at " << i << std::endl;
+        std::cout << "converge at " << i
+                  << ", distance2 = " << distance2(xi, xip1) << std::endl;
 
       break;
     }
@@ -196,11 +197,9 @@ project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
     xip1 = P(xip1);
   }
 
-  auto fitted = pss.fit(xip1, scale);
-
-  auto normal = std::visit(
+  const auto normal = std::visit(
       [&x = xip1](const auto &variant) { return gradient(variant, x); },
-      fitted);
+      pss.fit(xip1, scale));
 
   return {xip1, normal};
 }
