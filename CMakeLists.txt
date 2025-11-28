@@ -5,14 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(FETCHCONTENT_QUIET FALSE)
 
-# Release build: optimize aggressively
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -ffast-math")
-
-
-include_directories(inc)
-file(GLOB SOURCES "src/*.cpp")
-
-add_executable(point-morphology ${SOURCES})
+# Release flags
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -march=native") #  -ffast-math seems to not work
 
 include(FetchContent)
 
@@ -37,13 +31,30 @@ FetchContent_Declare(
 FetchContent_Declare(
    nanoflann
    GIT_REPOSITORY https://github.com/LeonardEyer/nanoflann.git
-   GIT_TAG     LeonardEyer-fix-dynamic-tree-sorted
+   GIT_TAG        LeonardEyer-fix-dynamic-tree-sorted
 )
-
 set(NANOFLANN_BUILD_EXAMPLES OFF)
 
 FetchContent_MakeAvailable(polyscope libigl happly nanoflann)
 
-target_include_directories(point-morphology PUBLIC ${happly_SOURCE_DIR})
 
-target_link_libraries(point-morphology polyscope Eigen3::Eigen nanoflann::nanoflann)
+# Header-only interface target
+add_library(pointmorph INTERFACE)
+
+target_include_directories(pointmorph INTERFACE
+    ${CMAKE_SOURCE_DIR}/inc
+    ${happly_SOURCE_DIR}
+)
+
+target_link_libraries(pointmorph INTERFACE
+    polyscope
+    Eigen3::Eigen
+    nanoflann::nanoflann
+)
+
+file(GLOB SOURCES "src/*.cpp")
+
+add_executable(point-morphology ${SOURCES})
+target_link_libraries(point-morphology PRIVATE pointmorph)
+
+add_subdirectory(tests)

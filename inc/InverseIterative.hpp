@@ -1,156 +1,111 @@
 #pragma once
 
-#include "PointCloud.hpp"
-#include "polyscope/view.h"
 #include <Eigen/Dense>
 #include <Eigen/src/Core/Matrix.h>
+#include <cassert>
 #include <cmath>
-#include <glm/glm.hpp>
+#include <csignal>
+#include <iostream>
 #include <vector>
 
-inline double sqDist(const glm::vec3 &a, const glm::vec3 &b) noexcept {
-  return glm::distance2(a, b);
-}
-
-inline double kernel(double dist2) noexcept { return std::exp(-dist2); }
-
-inline auto concat(const glm::vec3 &a, const glm::vec3 &b) {
-  return Eigen::Vector<float, 6>{a.x, a.y, a.z, b.x, b.y, b.z};
+template <typename T> inline float rbfKernel(const T &x, const T &y) {
+  return std::exp(-(x - y).squaredNorm());
 }
 
 struct KernelInverseResult {
-  double s;          // weight
-  Eigen::MatrixXd K; // inverted kernel matrix K^{-1}
-  Eigen::VectorXd k; // kernel values from point to each neighbour
-  Eigen::VectorX<bool> active;
+  using Mask = Eigen::VectorX<bool>;
+
+  double s;          // Iterartive approximation to the importance of this point
+  Eigen::MatrixXd K; // Inverted kernel matrix
+  Eigen::VectorXd k; // k(x, x_i) point similarity with each neighbour
+  Mask active; // collection of neighbours considered (we skip similar ones)
 };
 
-KernelInverseResult takeInverseIterative(
-    const glm::vec3 &xPos, const glm::vec3 &xNorm, const PointCloud &cloud,
-    const std::vector<size_t> &neighborIndices, double threshold) {
+inline float importance(const Eigen::MatrixXd &K, const Eigen::VectorXd &k) {
+  // Actually we need to divide by k(x,x) for non normalized kernels
+  return 1.0 - k.transpose() * K * k;
+};
 
-  // we want to compute s(x) = 1 − k^T K^{-1} k / k(x,x)
-  // by iteratively inverting K
-  // x := [p / sigma_p, n / sigma_n] // point plus normal normalized
+template <typename T>
+T importance_grad(const T &x, const std::vector<T> &neighbours,
+                  const Eigen::MatrixXd &K, const Eigen::VectorXd &k,
+                  const Eigen::VectorX<bool> &active, float sigma = 1.0f) {
 
-  const int num = static_cast<int>(neighborIndices.size());
-  if (num <= 0)
-    return {0.0};
-
-  Eigen::MatrixXd Kn = Eigen::MatrixXd::Zero(num, num);
-  Eigen::VectorXd kx = Eigen::VectorXd::Zero(num);
-  Eigen::VectorXd kn_np1(num);
-  Eigen::VectorXd an(num);
-  Eigen::VectorX<bool> active = Eigen::VectorX<bool>::Ones(num);
-
-  constexpr double dpTH = 1e-5;
-  double p = 0.0;
-
-  auto sqDistVM = [&](int idx) {
-    auto x = concat(xPos, xNorm);
-    auto xi = concat(cloud.positions[idx], cloud.normals[idx]);
-    return (x - xi).squaredNorm();
-  };
-
-  auto sqDistMM = [&](int i, int j) {
-    auto xi = concat(cloud.positions[i], cloud.normals[i]);
-    auto xj = concat(cloud.positions[j], cloud.normals[j]);
-    return (xi - xj).squaredNorm();
-  };
-
-  // Initialize first point
-  Kn(0, 0) = 1.0;
-  kx(0) = kernel(sqDistVM(neighborIndices[0]));
-  p = Kn(0, 0) * kx(0) * kx(0);
-
-  unsigned int k = 0;
-  int index = 0;
-
-  while (index < num - 1 && (1.0 - p) >= threshold) {
-    ++k;
-    ++index;
-
-    // compute k_n(x_{n+1}) = (k_n(x_{n+1}))_i = k(x_{n+1}, x_i) for i ≤ n
-    for (unsigned int m = 0; m < k; ++m)
-      kn_np1(m) = kernel(sqDistMM(neighborIndices[index], neighborIndices[m]));
-
-    // a_n = K_n * k_n(x_{n+1})
-    an.head(k) = Kn.topLeftCorner(k, k) * kn_np1.head(k);
-
-    double dot = kn_np1.head(k).dot(an.head(k));
-    if ((1.0 - dot) < dpTH) {
-      --k;
-      continue;
+  // The K matrix only contais the k first active neighbours. Therefore we need
+  // a way of indexing the active ones
+  auto neighboursFiltered = std::vector<T>();
+  for (auto i = 0; i < neighboursFiltered.size(); i++) {
+    if (active[i]) {
+      neighboursFiltered.push_back(neighbours[i]);
     }
-
-    // g_n = (k(x_{n+1},x_{n+1}) - k_n(x_{n+1})^T K_n^{-1} k_n(x_{n+1}))^{−1}
-    double gn = 1.0 / (1.0 - dot);
-
-    // Update Kn matrix
-    Kn.topLeftCorner(k, k) += gn * an.head(k) * an.head(k).transpose();
-    Kn.col(k).head(k) = -gn * an.head(k);
-    Kn.row(k).head(k) = -gn * an.head(k);
-
-    Kn(k, k) = gn;
-
-    if (threshold == -1) {
-      std::cout << "k = " << k << std::endl;
-      std::cout << "x = [" << xPos.x << ", " << xPos.y << ", " << xPos.z << "]"
-                << std::endl;
-      std::cout << "n = [" << xNorm.x << ", " << xNorm.y << ", " << xNorm.z
-                << "]" << std::endl;
-      std::cout << "x_j = [" << cloud.positions[index].x << ", "
-                << cloud.normals[index].y << ", " << cloud.normals[index].z
-                << "]" << std::endl;
-      std::cout << "n_j = [" << cloud.normals[index].x << ", "
-                << cloud.normals[index].y << ", " << cloud.normals[index].z
-                << "]" << std::endl;
-      std::cout << "j = " << index << std::endl;
-      std::cout << "Distance = " << sqDistVM(neighborIndices[index])
-                << std::endl;
-      std::cout << "|x - x_j|^2 = "
-                << glm::distance2(xPos, cloud.positions[index]) << std::endl;
-      std::cout << "|n _ n_j|^2 = "
-                << glm::distance2(xNorm, cloud.normals[index]) << std::endl;
-      std::cout << "k([x, n], [x_j, n_j]) = "
-                << kernel(sqDistVM(neighborIndices[index])) << std::endl;
-    }
-
-    kx(k) = kernel(sqDistVM(neighborIndices[index]));
-
-    double f = kx.head(k).dot(an.head(k));
-    double error = gn * (f - kx(k)) * (f - kx(k));
-    p += error;
   }
 
-  return {p, Kn, kx, active};
+  T sgrad = T::Zero();
+  for (auto i = 0; i < neighboursFiltered.size(); i++) {
+    for (auto j = 0; j < neighboursFiltered.size(); j++) {
+
+      const auto &x_i = neighboursFiltered[i];
+      const auto &x_j = neighboursFiltered[j];
+
+      sgrad += (2 * x - x_i - x_j) * k(i) * k(j) * K(i, j);
+    }
+  }
+  return (-2.0f / sigma * sigma) * sgrad;
 }
 
-using V6f = Eigen::Vector<float, 6>;
-using PointNormal = V6f;
-using PointNormals = std::vector<PointNormal>;
+// This is a performance improvement measure. Since the function
+// `takeInverseIterative` will be called many times in a loop with potentially
+// many neighbbours (N) we do not want to allocate/deallocate so many times
+struct PreallocatedMemory {
+  Eigen::MatrixXd K;
+  Eigen::VectorXd kx;
+  Eigen::VectorXd kn_np1;
+  Eigen::VectorXd an;
 
-float kernel6D(V6f x, V6f y) { return std::exp(-(x - y).squaredNorm()); }
+  PreallocatedMemory(size_t N) : K(N, N), kx(N), kn_np1(N), an(N) {};
 
-template <typename KernelFunc = decltype(&kernel6D)>
-KernelInverseResult
-takeInverseIterative(const PointNormal &x, const PointNormals &neighbours,
-                     const KernelFunc &kernelFunc = kernel6D,
-                     double threshold = -1) {
+  void grow(float factor = 1.2) {
+    // Compute new size + %
+    auto newSize = static_cast<Eigen::Index>(std::ceil(factor * kx.size()));
+
+    // Resize matrices/vectors conservatively to keep existing data
+    K.conservativeResize(newSize, newSize);
+    kx.conservativeResize(newSize);
+    kn_np1.conservativeResize(newSize);
+    an.conservativeResize(newSize);
+
+    // Optionally initialize new entries
+    K.bottomRows(newSize - K.rows()).setZero();
+    K.rightCols(newSize - K.cols()).setZero();
+    kx.tail(newSize - kx.size()).setZero();
+    kn_np1.tail(newSize - kn_np1.size()).setZero();
+    an.tail(newSize - an.size()).setZero();
+  }
+};
+
+template <typename T, typename KernelFunc = decltype(&rbfKernel<T>)>
+KernelInverseResult takeInverseIterative(
+    const T &x, const std::vector<T> &neighbours, PreallocatedMemory &prealloc,
+    const KernelFunc &kernelFunc = rbfKernel, double threshold = -1) {
 
   // we want to compute s(x) = 1 − k^T K^{-1} k / k(x,x)
   // by iteratively inverting K
-  // x := [p / sigma_p, n / sigma_n] // point plus normal normalized
 
   const int N = static_cast<int>(neighbours.size());
   if (N <= 0)
-    return {0.0};
+    return {1.0};
 
-  Eigen::MatrixXd Kn = Eigen::MatrixXd::Zero(N, N);
-  Eigen::VectorXd kx = Eigen::VectorXd::Zero(N);
-  Eigen::VectorXd kn_np1(N);
-  Eigen::VectorXd an(N);
-  Eigen::VectorX<bool> active_mask = Eigen::VectorX<bool>::Ones(N);
+  auto &[Kn, kx, kn_np1, an] = prealloc;
+
+  // Since we obtain vectors possibly from last iteration Zero out accumulation
+  // variables.
+  Kn.setZero();
+  kx.setZero();
+
+  Eigen::VectorX<bool> active_mask = Eigen::VectorX<bool>::Zero(N);
+
+  // we assume a normalized kernel
+  assert(kernelFunc(x, x) == 1);
 
   constexpr double dpTH = 1e-5;
   double p = 0.0;
@@ -158,6 +113,8 @@ takeInverseIterative(const PointNormal &x, const PointNormals &neighbours,
   // Initialize first point
   Kn(0, 0) = 1.0;
   kx(0) = kernelFunc(x, neighbours[0]);
+  active_mask[0] = true;
+
   p = Kn(0, 0) * kx(0) * kx(0);
 
   unsigned int k = 0;
@@ -176,45 +133,51 @@ takeInverseIterative(const PointNormal &x, const PointNormals &neighbours,
 
     double dot = kn_np1.head(k).dot(an.head(k));
     if ((1.0 - dot) < dpTH) {
-      // mark this neighbour as inactive
-      active_mask[index] = false;
       --k;
       continue;
+    }
+
+    // Grow as soon as we run out of memory
+    if (k >= kx.size() - 1) {
+      std::cout << "More neighbours than expected. Growing matrices"
+                << std::endl;
+      prealloc.grow(1.2);
     }
 
     // g_n = (k(x_{n+1},x_{n+1}) - k_n(x_{n+1})^T K_n^{-1} k_n(x_{n+1}))^{−1}
     double gn = 1.0 / (1.0 - dot);
 
-    if (false && threshold == -1) {
-      std::cout << "Kn(" << k << ", " << k << ") = [\n"
-                << Kn.topLeftCorner(k, k) << "]" << std::endl;
-    }
+    auto Knk = Kn.topLeftCorner(k, k);
+    auto an_head = an.head(k);
 
-    // Update Kn matrix
-    Kn.topLeftCorner(k, k) += gn * an.head(k) * an.head(k).transpose();
-    Kn.col(k).head(k) = -gn * an.head(k);
-    Kn.row(k).head(k) = -gn * an.head(k);
+    Knk.template selfadjointView<Eigen::Lower>().rankUpdate(an_head, gn);
 
+    Kn.col(k).head(k).noalias() = -gn * an_head;
+    Kn.row(k).head(k).noalias() = (-gn * an_head).transpose();
     Kn(k, k) = gn;
 
     kx(k) = kernelFunc(x, neighbours[index]);
-
-    if (false && threshold == -1) {
-      std::cout << "Kn(" << k << ", " << k << ") = [\n"
-                << Kn.topLeftCorner(k + 1, k + 1) << "]" << std::endl;
-    }
-
-    if (false && threshold == -1) {
-      std::cout << "j = " << index << std::endl;
-      std::cout << "k = " << k << std::endl;
-      std::cout << "k(x, x_j) = " << kernelFunc(x, neighbours[index])
-                << std::endl;
-    }
+    active_mask[index] = true; // mark this neighbour as active
 
     double f = kx.head(k).dot(an.head(k));
     double error = gn * (f - kx(k)) * (f - kx(k));
     p += error;
   }
 
-  return {p, Kn.topLeftCorner(k + 1, k + 1), kx.head(k + 1), active_mask};
+  // Here we copy a slice of the kernel matrix. Potentially we could speed up
+  // iterations by returning a reference? / not copying at all?
+  return {1.0 - p, Kn.topLeftCorner(k + 1, k + 1), kx.head(k + 1), active_mask};
+}
+
+// A method for when we do not want to prallocate. Simply allocate the maximum
+// amount of memory required given the number of neighbours
+template <typename T, typename KernelFunc = decltype(&rbfKernel<T>)>
+KernelInverseResult
+takeInverseIterative(const T &x, const std::vector<T> &neighbours,
+                     const KernelFunc &kernelFunc = rbfKernel,
+                     double threshold = -1) {
+  const int N = static_cast<int>(neighbours.size());
+
+  auto mem = PreallocatedMemory(N);
+  return takeInverseIterative(x, neighbours, mem, kernelFunc, threshold);
 }
