@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PointCloud.hpp"
+
 #include <Eigen/Dense>
 #include <glm/glm.hpp>
 #include <glm/gtx/norm.hpp>
@@ -162,6 +163,12 @@ struct APSS {
 
   inline float evaluate_surface(const PointCloud::Position &x, float h) const {
     return std::visit([&](const auto &fit) { return distance(fit, x); },
+                      fit(x, h));
+  }
+
+  inline PointCloud::Normal evaluate_gradient(const PointCloud::Position &x,
+                                              float h) const {
+    return std::visit([&](const auto &fit) { return gradient(fit, x); },
                       fit(x, h));
   }
 };
