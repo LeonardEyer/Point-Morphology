@@ -4,9 +4,9 @@
 #include "PointCloud.hpp"
 #include "Utils.hpp"
 
-inline PointCloud poissonDiskSubsample(const PointCloud &cloud, double distance,
-                                       float sigmaP = 1.0f, float sigmaN = 1.0f,
-                                       float eps = 0.5) {
+inline PointCloud subsample(const PointCloud &cloud, double distance,
+                            float sigmaP = 1.0f, float sigmaN = 1.0f,
+                            float eps = 0.5) {
   // empty pointcloud
   PointCloud sampled;
 

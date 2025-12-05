@@ -315,7 +315,7 @@ int main() {
     cloud.scale(100 / scaling);
   }
 
-  auto cloud_sampled = poissonDiskSubsample(cloud, radius, sigmaP, sigmaN);
+  auto cloud_sampled = subsample(cloud, radius, sigmaP, sigmaN);
 
   // drawPointCloud("cloud", cloud);
   auto subsampled = drawPointCloud("subsampled", cloud_sampled);
@@ -344,7 +344,7 @@ int main() {
     }
 
     if (ImGui::Button("Show subsampling")) {
-      cloud_sampled = poissonDiskSubsample(cloud, radius, sigmaP, sigmaN);
+      cloud_sampled = subsample(cloud, radius, sigmaP, sigmaN);
       subsampled = drawPointCloud("subsampled", cloud_sampled);
       log_point_cloud_stats(cloud_sampled);
     }
@@ -359,8 +359,8 @@ int main() {
     }
 
     if (ImGui::Button("Feature detection")) {
-      const auto edge_sampling = poissonDiskSubsample(
-          edge_sample(cloud_sampled), radius, sigmaP, sigmaN);
+      const auto edge_sampling =
+          subsample(edge_sample(cloud_sampled), radius, sigmaP, sigmaN);
 
       drawPointCloud("Edge sampling", edge_sampling);
     }
