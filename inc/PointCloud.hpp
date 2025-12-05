@@ -1,7 +1,11 @@
 #pragma once
+
+#include <Eigen/Dense>
+#include <Eigen/src/Core/Matrix.h>
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <happly.h>
 #include <iterator>
@@ -316,4 +320,41 @@ inline PointCloud extrude(const PointCloud &p, float factor) {
     extrudedPoints[i] += factor * p.normals[i];
   }
   return PointCloud(extrudedPoints, p.normals);
+}
+
+inline Eigen::Matrix4f quadric(const PointCloud &cloud, int idx,
+                               int kNeighbours = 10) {
+  Eigen::Matrix4f A_qem = Eigen::Matrix4f::Zero();
+
+  auto &x = cloud.positions[idx];
+  auto neighbors = cloud.tree->knn(x, kNeighbours, false);
+
+  for (auto [j, _] : neighbors) {
+    auto n = cloud.normals[j];
+    auto p = cloud.positions[j];
+
+    auto d = -glm::dot(p, n);
+    auto plane = Eigen::Vector4f(n.x, n.y, n.z, d);
+    // std::cout << "plane = \n" << plane << std::endl;
+    A_qem += plane * plane.transpose();
+  }
+  return A_qem;
+}
+
+inline float curvature_estimate(const PointCloud &cloud, int idx,
+                                int kNeighbours = 10) {
+
+  auto &x = cloud.positions[idx];
+  auto neighbors = cloud.tree->knn(x, kNeighbours, false);
+
+  float max_angle = 1;
+  for (auto [i, _] : neighbors) {
+    for (auto [j, _] : neighbors) {
+      auto n_i = cloud.normals[i];
+      auto n_j = cloud.normals[j];
+      max_angle = std::min(max_angle, glm::dot(n_i, n_j));
+    }
+  }
+
+  return max_angle;
 }
