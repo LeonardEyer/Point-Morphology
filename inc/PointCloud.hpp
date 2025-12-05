@@ -69,15 +69,23 @@ inline std::vector<glm::vec3> center(const std::vector<glm::vec3> &points) {
   return centerd_points;
 }
 
-template <class VectorOfVectorsType, typename num_t = float,
-          class Distance = nanoflann::metric_L2, typename IndexType = size_t>
+template <class VectorOfVectorsType, bool IsDynamic = true,
+          typename num_t = float, class Distance = nanoflann::metric_L2,
+          typename IndexType = size_t>
 struct Vec3Adaptor {
 
-  using self_t = Vec3Adaptor<VectorOfVectorsType, num_t, Distance, IndexType>;
+  using self_t =
+      Vec3Adaptor<VectorOfVectorsType, IsDynamic, num_t, Distance, IndexType>;
+
   using metric_t =
       typename Distance::template traits<num_t, self_t>::distance_t;
-  using index_t = nanoflann::KDTreeSingleIndexDynamicAdaptor<metric_t, self_t,
-                                                             3, IndexType>;
+
+  using index_t =
+      typename std::conditional<IsDynamic,
+                                nanoflann::KDTreeSingleIndexDynamicAdaptor<
+                                    metric_t, self_t, 3, IndexType>,
+                                nanoflann::KDTreeSingleIndexAdaptor<
+                                    metric_t, self_t, 3, IndexType>>::type;
 
   /** The kd-tree index for the user to call its methods as usual with any
    * other FLANN index */
@@ -89,10 +97,10 @@ struct Vec3Adaptor {
                        const unsigned int n_thread_build = 1)
       : pts(points) {
 
-    index = new index_t(
-        3, *this /* adaptor */,
-        nanoflann::KDTreeSingleIndexAdaptorParams(
-            2, nanoflann::KDTreeSingleIndexAdaptorFlags::None, n_thread_build));
+    index = new index_t(3, *this /* adaptor */,
+                        nanoflann::KDTreeSingleIndexAdaptorParams(
+                            10, nanoflann::KDTreeSingleIndexAdaptorFlags::None,
+                            n_thread_build));
   }
 
   ~Vec3Adaptor() { delete index; }
@@ -101,9 +109,6 @@ struct Vec3Adaptor {
     return pts.size();
   }
   [[nodiscard]] inline num_t kdtree_get_pt(size_t idx, int dim) const {
-    if (idx >= pts.size()) {
-      throw std::runtime_error("Out of bounds kdtree access");
-    }
     assert(idx < pts.size());
     assert(dim < 3);
 
@@ -114,10 +119,10 @@ struct Vec3Adaptor {
 
 } // namespace detail
 
-struct PointKDTree {
+template <bool IsDynamic> struct PointKDTree {
 
   using Scalar = float;
-  using Adaptor = detail::Vec3Adaptor<std::vector<glm::vec3>>;
+  using Adaptor = detail::Vec3Adaptor<std::vector<glm::vec3>, IsDynamic>;
 
   Adaptor adaptor;
 
@@ -187,22 +192,25 @@ struct PointKDTree {
 struct PointCloud {
   using Scalar = float;
 
+  static constexpr bool IsDynamic = false;
+  using KDTreeT = PointKDTree<IsDynamic>;
+
   using Position = glm::vec3;
   using Normal = glm::vec3;
 
   std::vector<Position> positions;
   std::vector<Normal> normals;
-  std::unique_ptr<PointKDTree> tree;
+  std::unique_ptr<KDTreeT> tree;
 
   PointCloud(const std::vector<Position> &_positions,
              const std::vector<Normal> &_normals)
       : positions(_positions), normals(_normals) {
-    tree = std::make_unique<PointKDTree>(positions);
+    tree = std::make_unique<KDTreeT>(positions);
   }
 
   PointCloud(std::vector<Position> &&_positions, std::vector<Normal> &&_normals)
       : positions(std::move(_positions)), normals(std::move(_normals)) {
-    tree = std::make_unique<PointKDTree>(positions);
+    tree = std::make_unique<KDTreeT>(positions);
   }
 
   void scale(float scaling) {
@@ -210,7 +218,7 @@ struct PointCloud {
                    [scaling](auto &p) { return p * scaling; });
   }
 
-  PointCloud() { tree = std::make_unique<PointKDTree>(positions); };
+  PointCloud() { tree = std::make_unique<KDTreeT>(positions); };
 
   // Delete copy constructor
   PointCloud(const PointCloud &other) = delete;
@@ -225,28 +233,10 @@ struct PointCloud {
     positions = std::move(other.positions);
     normals = std::move(other.normals);
     // rebuild index
-    tree = std::make_unique<PointKDTree>(positions);
+    tree = std::make_unique<KDTreeT>(positions);
     other.tree.reset();
     return *this;
   }
-
-  void insertPoint(const Position &p, const Normal &n) {
-    positions.push_back(p);
-    normals.push_back(n);
-    const auto newIndex = positions.size() - 1;
-    tree->addPoints(newIndex, newIndex);
-  }
-
-  void updatePoint(size_t index, const Position &p, const Normal &n) {
-    positions[index] = p;
-    normals[index] = n;
-
-    tree->adaptor.index->removePoint(index);
-    tree->addPoints(index, index);
-    // tree = std::make_unique<PointKDTree>(positions);
-  }
-
-  void deletePoint(size_t index) { assert(false); }
 
   template <typename WeightFunc>
   inline auto getWeightedPoints(const Position &p, size_t k,

@@ -139,17 +139,17 @@ shift<Operation::Dilation>(const PointStructuringElement &pse,
 template <Operation op>
 std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x,
-                  const PointStructuringElement::SDF &sdf, float scale) {
+                  const PointStructuringElement::SDF &sdf, float pse_scale) {
 
   static constexpr auto threshold = 1e-8f;
   static constexpr auto maxIter = 100;
 
-  const auto P = [&pss, &sdf, scale](const auto &p) {
-    auto fitted = fit(pss, p, sdf, scale);
+  const auto P = [&pss, &sdf, pse_scale](const auto &p) {
+    auto fitted = fit(pss, p, sdf, pse_scale);
 
     // compute indicator function for shift procedure
     // TODO: Speed up indicator function computation
-    auto inside = pss.evaluate_surface(p, 0.01f) <= 0;
+    auto inside = pss.evaluate_surface(p, .5f) <= 0;
 
     // shift then project
     return project(fitted, shift<op>(fitted, p, inside));
@@ -169,7 +169,7 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
     xip1 = P(xip1);
   }
   // TODO: save a computation by storing the last fit
-  auto fitted = fit(pss, xip1, sdf, scale);
+  auto fitted = fit(pss, xip1, sdf, pse_scale);
 
   auto normal = fitted.gradient(xip1);
 

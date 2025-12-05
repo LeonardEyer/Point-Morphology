@@ -10,27 +10,31 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
 
   constexpr auto sigma = 1.0f;
 
-  auto resampled = PointCloud(cloud.positions, cloud.normals);
+  auto resampled_positions = cloud.positions;
+  auto resampled_normals = cloud.normals;
+
+  auto resampled = PointKDTree<true>(resampled_positions);
+
   const auto apss = APSS(cloud);
-  const auto nPoints = resampled.positions.size();
+  const auto nPoints = resampled_positions.size();
 
   auto mem = PreallocatedMemory(256);
 
   for (auto iter = 0; iter < iterations; ++iter) {
     for (auto i = 0; i < nPoints; ++i) {
 
-      if (i != 0 && i % 1000 == 0) {
+      if (i != 0 && i % 10000 == 0) {
         std::cout << "Progress = "
                   << (iter * nPoints + i + 1) /
                          static_cast<float>(iterations * nPoints)
                   << std::endl;
       }
 
-      const auto &p = resampled.positions[i];
-      const auto &n = resampled.normals[i];
+      const auto &p = resampled_positions[i];
+      const auto &n = resampled_normals[i];
       const auto x = util::concat(p / sigmaP, n / sigmaN);
 
-      auto neighbours = resampled.tree->neighboursInRadius(p, gaussianStd);
+      auto neighbours = resampled.neighboursInRadius(p, gaussianStd);
 
       if (neighbours.empty()) {
         // std::cout << "No neighbours. skipping" << std::endl;
@@ -40,8 +44,8 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
       std::vector<util::PointNormal> neighbourPointNormals;
       for (auto &[idx, _] : neighbours) {
         neighbourPointNormals.push_back(
-            util::concat(resampled.positions[idx] / sigmaP,
-                         resampled.normals[idx] / sigmaN));
+            util::concat(resampled_positions[idx] / sigmaP,
+                         resampled_normals[idx] / sigmaN));
       }
 
       const auto res =
@@ -56,9 +60,17 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
       // project
       auto [p_final, n_final] = project_iterative(apss, p_k, gaussianStd);
       // update pointcloud / kdtree
-      resampled.updatePoint(i, p_final, n_final);
+      // TODO: resampled.updatePoint(i, p_final, n_final);
+
+      {
+        resampled_positions[i] = p;
+        resampled_normals[i] = n;
+
+        resampled.adaptor.index->removePoint(i);
+        resampled.addPoints(i, i);
+      }
     }
   }
 
-  return resampled;
+  return PointCloud(resampled_positions, resampled_normals);
 }
