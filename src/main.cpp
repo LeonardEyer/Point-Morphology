@@ -1,4 +1,5 @@
 #include "APSS.hpp"
+#include "FeatureSample.hpp"
 #include "InverseIterative.hpp"
 #include "PointCloud.hpp"
 #include "PointStructuringElement.hpp"
@@ -65,11 +66,13 @@ void addVolumeGrid(const detail::Bounds &bounds, const SDFFunc &sdf,
   // qNode->setIsosurfaceVizEnabled(true);
 }
 
-void drawPointCloud(std::string name, const PointCloud &p) {
-  auto *handCloud = polyscope::registerPointCloud(name, p.positions);
-  handCloud->addVectorQuantity("normals", p.normals);
-  handCloud->setPointRadius(0.002);
-  handCloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
+auto drawPointCloud(std::string name, const PointCloud &p) {
+  auto cloud = polyscope::registerPointCloud(name, p.positions);
+  cloud->addVectorQuantity("normals", p.normals);
+  cloud->setPointRadius(0.002);
+  cloud->setPointRenderMode(polyscope::PointRenderMode::Quad);
+
+  return cloud;
 }
 
 auto drawPointCloud(
@@ -303,7 +306,7 @@ int main() {
   plane2->setTransform(
       glm::rotate(glm::mat4(1.0f), glm::radians(90.f), glm ::vec3(0, 1, 0)));
 
-  auto cloud = readNOFF("./resources/cube.txt");
+  auto cloud = readNOFF("./resources/cone.txt");
   {
     // Rescale to have bounding box of 100
     auto bounds = detail::computeBoundingBox(cloud.positions, 1);
@@ -314,8 +317,8 @@ int main() {
 
   auto cloud_sampled = poissonDiskSubsample(cloud, radius, sigmaP, sigmaN);
 
-  drawPointCloud("cloud", cloud);
-  drawPointCloud("subsampled", cloud_sampled);
+  // drawPointCloud("cloud", cloud);
+  auto subsampled = drawPointCloud("subsampled", cloud_sampled);
 
   const auto apss = APSS(cloud_sampled);
 
@@ -342,7 +345,7 @@ int main() {
 
     if (ImGui::Button("Show subsampling")) {
       cloud_sampled = poissonDiskSubsample(cloud, radius, sigmaP, sigmaN);
-      drawPointCloud("subsampled", cloud_sampled);
+      subsampled = drawPointCloud("subsampled", cloud_sampled);
       log_point_cloud_stats(cloud_sampled);
     }
     ImGui::InputInt("Resampling iterations", &resampling_iterations);
@@ -355,14 +358,76 @@ int main() {
       log_point_cloud_stats(cloud_resampled);
     }
 
+    if (ImGui::Button("Feature detection")) {
+      const auto edge_sampling = poissonDiskSubsample(
+          edge_sample(cloud_sampled), radius, sigmaP, sigmaN);
+
+      drawPointCloud("Edge sampling", edge_sampling);
+    }
+
     if (!polyscope::haveSelection()) {
       return;
     }
-    auto sel = polyscope::getSelection();
-    if (ImGui::Button("Show nearest in radius")) {
+    const auto sel = polyscope::getSelection();
+    const auto &p = cloud_sampled.positions[sel.localIndex];
+    const auto &n = cloud_sampled.normals[sel.localIndex];
 
-      auto &p = cloud_sampled.positions[sel.localIndex];
-      auto &n = cloud_sampled.normals[sel.localIndex];
+    if (ImGui::Button("Show curvature")) {
+
+      if (curvature_estimate(cloud_sampled, sel.localIndex) < 0.75) {
+        const auto A_qem = quadric(cloud_sampled, sel.localIndex);
+        const auto projected = projectToFeature(p, n, A_qem);
+
+        if (projected) {
+          drawPointCloud("projection", std::vector{p, projected->first},
+                         polyscope::PointRenderMode::Sphere);
+        }
+      }
+
+      // Eigen::Matrix3f A_qem2 = A_qem.topLeftCorner(3, 3);
+      // Eigen::JacobiSVD svd(A_qem2, Eigen::ComputeThinU |
+      // Eigen::ComputeThinV);
+
+      // auto singularValues = svd.singularValues();
+      // auto singularVectors = svd.matrixU();
+
+      // auto selcloud = drawPointCloud(
+      //     "selected", std::vector{cloud_sampled.positions[sel.localIndex]});
+
+      // {
+      //   auto sv1 = selcloud->addVectorQuantity(
+      //       "Singular Vector 1",
+      //       std::vector{util::to_glm(singularVectors.col(0))});
+      //   // sv1->setVectorLengthScale(singularValues[0]);
+      //   sv1->setEnabled(true);
+      // }
+      // {
+      //   auto sv2 = selcloud->addVectorQuantity(
+      //       "Singular Vector 2",
+      //       std::vector{util::to_glm(singularVectors.col(1))});
+      //   // sv2->setVectorLengthScale(singularValues[1]);
+      //   sv2->setEnabled(true);
+      // }
+      // {
+      //   auto sv3 = selcloud->addVectorQuantity(
+      //       "Singular Vector 3",
+      //       std::vector{util::to_glm(singularVectors.col(2))});
+      //   // sv3->setVectorLengthScale(singularValues[2]);
+      //   sv3->setEnabled(true);
+      // }
+
+      // std::cout << "singularValues = \n" << singularValues << std::endl;
+      // std::cout << "singluarVectors = \n" << singularVectors << std::endl;
+
+      std::vector<float> curvature;
+      for (auto i = 0; i < cloud_sampled.positions.size(); i++) {
+        curvature.emplace_back(curvature_estimate(cloud_sampled, i));
+      }
+
+      subsampled->addScalarQuantity("curvature", curvature)->setEnabled(true);
+    }
+
+    if (ImGui::Button("Show nearest in radius")) {
 
       auto neighbours = cloud_sampled.tree->neighboursInRadius(p, radius);
 
