@@ -264,8 +264,8 @@ std::vector<glm::vec3> sampleBoxVolume(const detail::Bounds &bounds,
 }
 int gridResolution = 50;
 
-constexpr auto pse_scale = 0.25f;
-
+float pse_scale = 10.f;
+float pss_scale = 1.0f;
 float radius = 2.5;
 float sigmaP = 0.5; // std::min(radius, pse_scale) / 2;
 float sigmaN = 0.75;
@@ -333,6 +333,8 @@ int main() {
 
   polyscope::state::userCallback = [&]() {
     ImGui::InputFloat("radius", &radius);
+    ImGui::InputFloat("PSE Scale", &pse_scale);
+    ImGui::InputFloat("PSS Kernel Support", &pss_scale);
 
     ImGui::InputFloat("sigmaP", &sigmaP);
     ImGui::InputFloat("sigmaN", &sigmaN);
@@ -340,7 +342,7 @@ int main() {
     ImGui::InputInt("Grid resolution", &gridResolution);
 
     if (ImGui::Button("Show PSS")) {
-      addVolumeGrid(bounds, makeSDF(radius), gridResolution);
+      addVolumeGrid(bounds, makeSDF(pss_scale), gridResolution);
     }
 
     if (ImGui::Button("Show subsampling")) {
@@ -356,6 +358,45 @@ int main() {
 
       drawPointCloud("resampled", cloud_resampled);
       log_point_cloud_stats(cloud_resampled);
+    }
+
+    if (ImGui::Button("Dilate")) {
+      const auto denseSampling = sampleBoxVolume(bounds, sigmaP);
+      std::cout << "Dense sampling count = " << denseSampling.size()
+                << std::endl;
+      auto dilated_points = denseSampling;
+      auto dilated_normals =
+          std::vector<PointCloud::Normal>(dilated_points.size());
+      // now we want to project the extruded points down onto the dilation
+      auto start = std::chrono::high_resolution_clock::now();
+      auto end = start;
+      for (auto i = 0; i < dilated_points.size(); i++) {
+
+        if (i != 0 && i % 100000 == 0) {
+          end = std::chrono::high_resolution_clock::now();
+          std::cout << "Progress = "
+                    << i / static_cast<float>(dilated_points.size())
+                    << ", Duration = "
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(
+                           end - start)
+                           .count()
+                    << " ms" << std::endl;
+          start = std::chrono::high_resolution_clock::now();
+        }
+
+        // now we iteratively project
+        auto [p, n] = structuring_elements::project_iterative<
+            structuring_elements::Operation::Dilation>(
+            apss, dilated_points[i], structuring_elements::sdf::sphere,
+            pse_scale);
+
+        dilated_points[i] = p;
+        dilated_normals[i] = n;
+      }
+
+      auto dilatedPointCloud = PointCloud(dilated_points, dilated_normals);
+
+      drawPointCloud("dilated", dilatedPointCloud);
     }
 
     if (ImGui::Button("Feature detection")) {
@@ -383,41 +424,6 @@ int main() {
                          polyscope::PointRenderMode::Sphere);
         }
       }
-
-      // Eigen::Matrix3f A_qem2 = A_qem.topLeftCorner(3, 3);
-      // Eigen::JacobiSVD svd(A_qem2, Eigen::ComputeThinU |
-      // Eigen::ComputeThinV);
-
-      // auto singularValues = svd.singularValues();
-      // auto singularVectors = svd.matrixU();
-
-      // auto selcloud = drawPointCloud(
-      //     "selected", std::vector{cloud_sampled.positions[sel.localIndex]});
-
-      // {
-      //   auto sv1 = selcloud->addVectorQuantity(
-      //       "Singular Vector 1",
-      //       std::vector{util::to_glm(singularVectors.col(0))});
-      //   // sv1->setVectorLengthScale(singularValues[0]);
-      //   sv1->setEnabled(true);
-      // }
-      // {
-      //   auto sv2 = selcloud->addVectorQuantity(
-      //       "Singular Vector 2",
-      //       std::vector{util::to_glm(singularVectors.col(1))});
-      //   // sv2->setVectorLengthScale(singularValues[1]);
-      //   sv2->setEnabled(true);
-      // }
-      // {
-      //   auto sv3 = selcloud->addVectorQuantity(
-      //       "Singular Vector 3",
-      //       std::vector{util::to_glm(singularVectors.col(2))});
-      //   // sv3->setVectorLengthScale(singularValues[2]);
-      //   sv3->setEnabled(true);
-      // }
-
-      // std::cout << "singularValues = \n" << singularValues << std::endl;
-      // std::cout << "singluarVectors = \n" << singularVectors << std::endl;
 
       std::vector<float> curvature;
       for (auto i = 0; i < cloud_sampled.positions.size(); i++) {
@@ -495,15 +501,6 @@ int main() {
       }
     }
   };
-
-  // const auto apss = APSS(cloud);
-
-  // const auto apssSDF = [&apss](const glm::vec3 &p) {
-  //   const auto fitted = apss.fit(p, pss_support);
-
-  //   return std::visit([&p](const auto &fit) { return distance(fit, p); },
-  //                     fitted);
-  // };
 
   // auto bounds = detail::computeBoundingBox(cloud.positions, 2.f +
   // pse_scale);
