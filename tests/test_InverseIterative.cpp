@@ -39,12 +39,14 @@ TEST(InverseIterativeTests, IterativeSameAsFull) {
   for (auto &n : neighbours) {
     n = PointNormal::Random();
   }
-  // DO NOT USE auto or we will get random values each time we read point
+  // Remark: do not use auto or we will get random values each time we read
+  // point
   PointNormal point = PointNormal::Random();
 
   const auto kernelFunc = [](const auto &a, const auto &b) {
     return std::exp(-(a - b).squaredNorm());
   };
+
   auto inverseWhole = buildInverseKernelMatrix(point, neighbours, kernelFunc);
   auto inverseIterative = takeInverseIterative(point, neighbours, kernelFunc);
 

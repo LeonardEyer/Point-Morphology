@@ -144,16 +144,29 @@ KernelInverseResult takeInverseIterative(
       prealloc.grow(1.2);
     }
 
-    // g_n = (k(x_{n+1},x_{n+1}) - k_n(x_{n+1})^T K_n^{-1} k_n(x_{n+1}))^{−1}
+    // Calculate scalar g_n based on the Schur complement definition in the
+    // paper g_n = (k(x_{n+1},x_{n+1}) - k_n(x_{n+1})^T K_n^{-1}
+    // k_n(x_{n+1}))^{−1}
     double gn = 1.0 / (1.0 - dot);
 
+    // Iterative Block Matrix Inversion (Eq. 10)
+    // We are constructing K_{n+1}^-1 by updating K_n^-1 (Knk) and padding the
+    // new row/col. The target structure is:
+    // [ K_n^-1 + g_n * a_n * a_n^T    -g_n * a_n ]
+    // [      -g_n * a_n^T                 g_n    ]
     auto Knk = Kn.topLeftCorner(k, k);
     auto an_head = an.head(k);
 
-    Knk.template selfadjointView<Eigen::Lower>().rankUpdate(an_head, gn);
+    // 1. Update Top-Left Block: K_n^{-1} + g_n * a_n * a_n^T
+    Knk += gn * an_head * an_head.transpose();
 
+    // 2. Update Top-Right Block: -g_n * a_n
     Kn.col(k).head(k).noalias() = -gn * an_head;
+
+    // 3. Update Bottom-Left Block: -g_n * a_n^T
     Kn.row(k).head(k).noalias() = (-gn * an_head).transpose();
+
+    // 4. Update Bottom-Right Element: g_n
     Kn(k, k) = gn;
 
     kx(k) = kernelFunc(x, neighbours[index]);
