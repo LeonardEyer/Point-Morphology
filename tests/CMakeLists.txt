@@ -9,7 +9,8 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 add_executable(project_tests
-    test_InverseIterative.cpp
+  test_InverseIterative.cpp
+  test_VoxelGrid.cpp
 )
 
 target_link_libraries(project_tests PRIVATE gtest_main pointmorph)
