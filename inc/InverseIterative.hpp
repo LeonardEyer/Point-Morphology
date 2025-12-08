@@ -34,7 +34,7 @@ T importance_grad(const T &x, const std::vector<T> &neighbours,
   // The K matrix only contais the k first active neighbours. Therefore we need
   // a way of indexing the active ones
   auto neighboursFiltered = std::vector<T>();
-  for (auto i = 0; i < neighboursFiltered.size(); i++) {
+  for (auto i = 0; i < neighbours.size(); i++) {
     if (active[i]) {
       neighboursFiltered.push_back(neighbours[i]);
     }
@@ -138,9 +138,9 @@ KernelInverseResult takeInverseIterative(
     }
 
     // Grow as soon as we run out of memory
-    if (k >= kx.size() - 1) {
-      std::cout << "More neighbours than expected. Growing matrices"
-                << std::endl;
+    if (k >= kx.size()) {
+      std::cout << "More neighbours than expected. (kx.size() = " << kx.size()
+                << ", k = " << k << ") Growing matrices" << std::endl;
       prealloc.grow(1.2);
     }
 
@@ -154,11 +154,10 @@ KernelInverseResult takeInverseIterative(
     // new row/col. The target structure is:
     // [ K_n^-1 + g_n * a_n * a_n^T    -g_n * a_n ]
     // [      -g_n * a_n^T                 g_n    ]
-    auto Knk = Kn.topLeftCorner(k, k);
-    auto an_head = an.head(k);
+    const auto an_head = an.head(k);
 
     // 1. Update Top-Left Block: K_n^{-1} + g_n * a_n * a_n^T
-    Knk += gn * an_head * an_head.transpose();
+    Kn.topLeftCorner(k, k) += gn * an_head * an_head.transpose();
 
     // 2. Update Top-Right Block: -g_n * a_n
     Kn.col(k).head(k).noalias() = -gn * an_head;
@@ -171,7 +170,6 @@ KernelInverseResult takeInverseIterative(
 
     kx(k) = kernelFunc(x, neighbours[index]);
     active_mask[index] = true; // mark this neighbour as active
-
     double f = kx.head(k).dot(an.head(k));
     double error = gn * (f - kx(k)) * (f - kx(k));
     p += error;

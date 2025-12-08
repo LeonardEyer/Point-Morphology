@@ -59,12 +59,11 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
 
       // project
       auto [p_final, n_final] = project_iterative(apss, p_k, gaussianStd);
-      // update pointcloud / kdtree
-      // TODO: resampled.updatePoint(i, p_final, n_final);
 
+      // update pointcloud / kdtree
       {
-        resampled_positions[i] = p;
-        resampled_normals[i] = n;
+        resampled_positions[i] = p_final;
+        resampled_normals[i] = n_final;
 
         resampled.adaptor.index->removePoint(i);
         resampled.addPoints(i, i);
