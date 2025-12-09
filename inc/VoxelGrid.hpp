@@ -1,5 +1,6 @@
 #include <Eigen/Dense>
 #include <Eigen/src/Core/Matrix.h>
+#include <optional>
 #include <unordered_map>
 
 using Point = Eigen::Vector3f;
