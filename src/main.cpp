@@ -265,12 +265,12 @@ std::vector<glm::vec3> sampleBoxVolume(const detail::Bounds &bounds,
 }
 int gridResolution = 50;
 
-float pse_scale = 10.f;
+float pse_scale = 5.f;
 float pss_scale = 1.0f;
 float radius = 2.5;
-float sigmaP = 0.5; // std::min(radius, pse_scale) / 2;
+float sigmaP = std::min(radius, pse_scale) / 2;
 float sigmaN = 0.75;
-int resampling_iterations = 3;
+int resampling_iterations = 10;
 
 struct Kernel {
   Eigen::MatrixXd K; // inverse kernel matrix
@@ -318,17 +318,19 @@ int main() {
 
   auto cloud_sampled = subsample(cloud, radius, sigmaP, sigmaN);
 
-  // drawPointCloud("cloud", cloud);
   auto subsampled = drawPointCloud("subsampled", cloud_sampled);
 
   const auto apss = APSS(cloud_sampled);
-
   const auto makeSDF = [&apss](const auto radius) {
     return [&apss, radius](const auto &p) {
       return std::visit([&p](const auto &fit) { return distance(fit, p); },
                         apss.fit(p, radius));
     };
   };
+  const auto cloud_resampled =
+      resample(cloud_sampled, radius, sigmaP, sigmaN, resampling_iterations);
+
+  drawPointCloud("resampled", cloud_resampled);
 
   const auto bounds = detail::computeBoundingBox(cloud_sampled.positions, 1.5f);
 
@@ -496,7 +498,7 @@ int main() {
       auto s_grad = importance_grad(pointNormal, neighbours6D, kernelResult.K,
                                     kernelResult.k, kernelResult.active);
       auto s_grad_p = util::to_glm(s_grad.head(3));
-      std::cout << "s_grad =\n" << s_grad << std::endl;
+      // std::cout << "s_grad =\n" << s_grad << std::endl;
       {
         auto pCloud = drawPointCloud("point", std::vector{p},
                                      polyscope::PointRenderMode::Sphere);
@@ -506,10 +508,11 @@ int main() {
       }
 
       {
+        auto start = p - 0.5f * s_grad_p;
 
-        auto [pp1, np1] = project_iterative(apss, p + 0.5f * s_grad_p, radius);
+        auto [pp1, _] = project_iterative(apss, start, radius);
 
-        auto pCloud = drawPointCloud("update", std::vector{pp1},
+        auto pCloud = drawPointCloud("update", std::vector{start, pp1},
                                      polyscope::PointRenderMode::Sphere);
       }
     }

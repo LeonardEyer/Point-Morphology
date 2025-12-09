@@ -1,5 +1,7 @@
 #pragma once
 
+#include <random>
+
 #include "APSS.hpp"
 #include "InverseIterative.hpp"
 #include "PointCloud.hpp"
@@ -13,14 +15,25 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
   auto resampled_positions = cloud.positions;
   auto resampled_normals = cloud.normals;
 
-  auto resampled = PointKDTree<true>(resampled_positions);
+  auto resampled = PointKDTree<false>(resampled_positions);
 
   const auto apss = APSS(cloud);
   const auto nPoints = resampled_positions.size();
 
+  std::mt19937 rng(std::random_device{}());
+  std::uniform_int_distribution<size_t> dist(0, nPoints - 1);
+
   auto mem = PreallocatedMemory(256);
 
   for (auto iter = 0; iter < iterations; ++iter) {
+
+    // Create a list of indices 0 .. nPoints-1
+    std::vector<size_t> indices(nPoints);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    // Shuffle them so each index is used exactly once in random order
+    std::shuffle(indices.begin(), indices.end(), rng);
+
     for (auto i = 0; i < nPoints; ++i) {
 
       if (i != 0 && i % 10000 == 0) {
@@ -29,9 +42,11 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
                          static_cast<float>(iterations * nPoints)
                   << std::endl;
       }
+      // choose a random index
+      size_t randIndex = indices[i];
 
-      const auto &p = resampled_positions[i];
-      const auto &n = resampled_normals[i];
+      const auto &p = resampled_positions[randIndex];
+      const auto &n = resampled_normals[randIndex];
       const auto x = util::concat(p / sigmaP, n / sigmaN);
 
       auto neighbours = resampled.neighboursInRadius(p, gaussianStd);
@@ -55,18 +70,18 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
           importance_grad(x, neighbourPointNormals, res.K, res.k, res.active);
 
       // gradient step
-      const auto p_k = p + 0.5f * util::to_glm(grad.head(3));
+      const auto p_k = p - 0.5f * util::to_glm(grad.head(3));
 
       // project
       auto [p_final, n_final] = project_iterative(apss, p_k, gaussianStd);
 
       // update pointcloud / kdtree
       {
-        resampled_positions[i] = p_final;
-        resampled_normals[i] = n_final;
+        resampled_positions[randIndex] = p_final;
+        resampled_normals[randIndex] = n_final;
 
-        resampled.adaptor.index->removePoint(i);
-        resampled.addPoints(i, i);
+        // resampled.adaptor.index->removePoint(randIndex);
+        // resampled.addPoints(randIndex, randIndex);
       }
     }
   }
