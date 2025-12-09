@@ -1,8 +1,10 @@
 #pragma once
 
 #include "PointCloud.hpp"
+#include "Utils.hpp"
 
 #include <Eigen/Dense>
+#include <arm_neon.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/norm.hpp>
 #include <limits>
@@ -28,21 +30,21 @@ struct FitParams {
 
 struct FitResult {
   FitParams params;
-  inline FitResult(const FitParams &_params) : params(_params) {}
+  inline explicit FitResult(const FitParams &_params) : params(_params) {}
 };
 
 struct SphereFitResult : FitResult {
-  glm::vec3 center;
+  glm::vec3 center{};
   float radius;
 
-  SphereFitResult(const FitParams &_params) : FitResult(_params) {
+  explicit SphereFitResult(const FitParams &_params) : FitResult(_params) {
     center = -0.5f * (1.0f / params.u_d1) * params.u_mid;
     radius = std::sqrt(glm::dot(center, center) - (params.u0 / params.u_d1));
   }
 };
 
 struct PlaneFitResult : FitResult {
-  PlaneFitResult(const FitParams &_params) : FitResult(_params) {}
+  explicit PlaneFitResult(const FitParams &_params) : FitResult(_params) {}
 };
 
 inline constexpr float distance(const SphereFitResult &fit,
@@ -94,14 +96,18 @@ struct APSS {
   using FitVariant = std::variant<SphereFitResult, PlaneFitResult>;
 
   [[nodiscard]] FitVariant fit(const PointCloud::Position &x, float h) const {
-    const float beta = 1.0f;
+    constexpr double beta = 1.0;
+
+    const auto spacing = pointCloud.getNeighbourSpacing(x, 6);
 
     static const auto phi = [](const auto &x) -> float {
       return x >= 1 ? 0 : std::pow(1 - x * x, 4);
     };
 
     // reference to h
-    const auto weight = [&h](const auto &norm) { return phi(norm / h); };
+    const auto weight = [&h, spacing](const auto &norm) {
+      return phi(norm / (h * spacing));
+    };
 
     auto neighbours = pointCloud.getWeightedPoints(x, 20, weight);
 
@@ -111,48 +117,48 @@ struct APSS {
     }
 
     // Weighted sums initialization
-    float Sw = 0.0f;
-    float Swnp = 0.0f;
-    float Swpp = 0.0f;
-    float SwnSwp = 0.0f;
-    float SwpSwp = 0.0f;
+    double Sw = 0.0f;
+    double Swnp = 0.0f;
+    double Swpp = 0.0f;
+    double SwnSwp = 0.0f;
+    double SwpSwp = 0.0f;
 
-    auto Swp = glm::vec3(0);
-    auto Swn = glm::vec3(0);
+    Eigen::Vector3d Swp = Eigen::Vector3d::Zero();
+    Eigen::Vector3d Swn = Eigen::Vector3d::Zero();
 
     // First pass: accumulate Sw and Swp
     for (const auto &[i, w] : neighbours) {
       Sw += w;
-      Swp += w * pointCloud.positions[i];
+      Swp += w * util::to_eigen(pointCloud.positions[i]).cast<double>();
     }
 
     // Second pass: accumulate remaining sums
     for (const auto &[i, w] : neighbours) {
 
-      auto &n = pointCloud.normals[i];
-      auto &p = pointCloud.positions[i];
+      auto n = util::to_eigen(pointCloud.normals[i]).cast<double>();
+      auto p = util::to_eigen(pointCloud.positions[i]).cast<double>();
 
-      Swnp += w * glm::dot(n, p);
-      Swpp += w * glm::dot(p, p);
-      SwnSwp += w * glm::dot(n, Swp);
-      SwpSwp += w * glm::dot(p, Swp);
+      Swnp += w * n.dot(p);
+      Swpp += w * p.dot(p);
+      SwnSwp += w * n.dot(Swp);
+      SwpSwp += w * p.dot(Swp);
       Swn += w * n;
     }
 
     assert(Sw != 0.0f);
 
     // Compute coefficients
-    const float denom = Sw * Swpp - SwpSwp;
-    float u_d1 = 0.0f;
+    const auto denom = Sw * Swpp - SwpSwp;
 
-    if (std::fabs(denom) >= std::numeric_limits<float>::epsilon()) {
-      u_d1 = beta * 0.5f * ((Sw * Swnp - SwnSwp) / denom);
-    }
+    double u_d1 = std::abs(denom) >= std::numeric_limits<double>::epsilon()
+                      ? beta * 0.5f * ((Sw * Swnp - SwnSwp) / denom)
+                      : 0.0;
 
     const auto u_mid = (1.0f / Sw) * (Swn - (2.0f * u_d1 * Swp));
-    const float u0 = -(1.0f / Sw) * (glm::dot(u_mid, Swp) + u_d1 * Swpp);
+    const float u0 = -(1.0f / Sw) * (u_mid.dot(Swp) + u_d1 * Swpp);
 
-    FitParams params{u0, u_mid, u_d1};
+    FitParams params{u0, util::to_glm(u_mid.cast<float>()),
+                     static_cast<float>(u_d1)};
 
     if (std::fabs(u_d1) > 1e-4f) {
       return SphereFitResult(params);
@@ -177,7 +183,8 @@ struct APSS {
 inline std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
                   size_t maxIter = 100) {
-  static constexpr auto eps = 1e-4f;
+  const auto spacing = pss.pointCloud.getNeighbourSpacing(x, 6);
+  static const auto eps = 1e-4f * spacing;
 
   const auto P = [&pss, h = scale](const auto &p) {
     auto fitted = pss.fit(p, h);
@@ -191,7 +198,7 @@ project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
 
   for (auto i = 0; i < maxIter; i++) {
 
-    if (glm::distance2(xi, xip1) <= eps) {
+    if (glm::distance2(xi, xip1) <= (eps * eps)) {
       // converged
       if (i > 50)
         std::cout << "converge at " << i

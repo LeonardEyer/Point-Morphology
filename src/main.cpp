@@ -60,6 +60,7 @@ void addVolumeGrid(const detail::Bounds &bounds, const SDFFunc &sdf,
       psGrid->addNodeScalarQuantity("sdf node", values);
   qNode->setEnabled(true);
   qNode->setIsolinesEnabled(true);
+  qNode->setMapRange({-0.1, 0.1f});
 
   qNode->setGridcubeVizEnabled(true);
   qNode->setIsosurfaceLevel(0.0);
@@ -413,6 +414,21 @@ int main() {
     const auto &p = cloud_sampled.positions[sel.localIndex];
     const auto &n = cloud_sampled.normals[sel.localIndex];
 
+    if (ImGui::Button("Compute APSS fit")) {
+      const auto pos = PointCloud::Position(sel.position);
+      const auto fitresult = apss.fit(pos, pss_scale);
+      std::visit(
+          [](const auto &variant) {
+            using T = std::decay_t<decltype(variant)>;
+            if constexpr (std::is_same_v<T, SphereFitResult>) {
+              std::cout << "Sphere" << std::endl;
+            } else if constexpr (std::is_same_v<T, PlaneFitResult>) {
+              std::cout << "Plane" << std::endl;
+            }
+          },
+          fitresult);
+    }
+
     if (ImGui::Button("Show curvature")) {
 
       if (curvature_estimate(cloud_sampled, sel.localIndex) < 0.75) {
@@ -460,11 +476,8 @@ int main() {
 
       auto kernelResult =
           takeInverseIterative(pointNormal, neighbours6D, rbfKernel, -1);
-      auto s2 = importance(kernelResult.K, kernelResult.k);
-      auto s = kernelResult.s;
 
-      std::cout << "s = " << s << std::endl;
-      std::cout << "s2 = " << s2 << std::endl;
+      auto s = kernelResult.s;
 
       {
         auto nCloud = drawPointCloud("neighbours", neighbours_points,
@@ -477,13 +490,13 @@ int main() {
             nCloud->addScalarQuantity("importance", neighbours_importance)
                 ->setEnabled(true);
         nCloud->setPointRadiusQuantity("importance");
-        nCloud->setPointRadius(0.02);
+        nCloud->setPointRadius(0.002);
       }
 
       auto s_grad = importance_grad(pointNormal, neighbours6D, kernelResult.K,
                                     kernelResult.k, kernelResult.active);
       auto s_grad_p = util::to_glm(s_grad.head(3));
-
+      std::cout << "s_grad =\n" << s_grad << std::endl;
       {
         auto pCloud = drawPointCloud("point", std::vector{p},
                                      polyscope::PointRenderMode::Sphere);

@@ -50,7 +50,7 @@ T importance_grad(const T &x, const std::vector<T> &neighbours,
       sgrad += (2 * x - x_i - x_j) * k(i) * k(j) * K(i, j);
     }
   }
-  return (-2.0f / sigma * sigma) * sgrad;
+  return (-2.0f / (sigma * sigma)) * sgrad;
 }
 
 // This is a performance improvement measure. Since the function
@@ -157,7 +157,7 @@ KernelInverseResult takeInverseIterative(
     const auto an_head = an.head(k);
 
     // 1. Update Top-Left Block: K_n^{-1} + g_n * a_n * a_n^T
-    Kn.topLeftCorner(k, k) += gn * an_head * an_head.transpose();
+    Kn.topLeftCorner(k, k).noalias() += gn * an_head * an_head.transpose();
 
     // 2. Update Top-Right Block: -g_n * a_n
     Kn.col(k).head(k).noalias() = -gn * an_head;

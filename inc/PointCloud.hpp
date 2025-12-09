@@ -13,6 +13,7 @@
 #include <memory>
 #include <nanoflann.hpp>
 #include <numeric>
+#include <ranges>
 #include <stdexcept>
 #include <vector>
 
@@ -147,7 +148,12 @@ template <bool IsDynamic> struct PointKDTree {
     return results;
   }
 
-  auto knn(const glm::vec3 &p, size_t k, bool sorted = true) const noexcept {
+  /// Collect k nearest neighbours at p
+  ///
+  /// @return a vector of pairs where we have (neighbour index, squared distance
+  /// to point)
+  [[nodiscard]] auto knn(const glm::vec3 &p, size_t k,
+                         bool sorted = true) const noexcept {
 
     // Collect an extra point
     k += 1;
@@ -238,8 +244,23 @@ struct PointCloud {
     return *this;
   }
 
+  [[nodiscard]] inline float getNeighbourSpacing(const Position &p,
+                                                 size_t k) const {
+    const auto neighbours = tree->knn(p, k);
+
+    auto sum = 0.0f;
+    for (const auto i : neighbours | std::views::keys) {
+      for (const auto j : neighbours | std::views::keys) {
+        if (i != j) {
+          sum += glm::distance(positions[i], positions[j]);
+        }
+      }
+    }
+    return sum / static_cast<float>(neighbours.size());
+  }
+
   template <typename WeightFunc>
-  inline auto getWeightedPoints(const Position &p, size_t k,
+  [[nodiscard]] inline auto getWeightedPoints(const Position &p, size_t k,
                                 const WeightFunc &weightFunc) const {
 
     auto weightedResult = std::vector<std::pair<size_t, float>>();
@@ -255,7 +276,7 @@ struct PointCloud {
   }
 };
 
-inline PointCloud fromPLY(std::string filename) {
+inline PointCloud fromPLY(const std::string &filename) {
 
   auto positions = std::vector<PointCloud::Position>{};
   auto normals = std::vector<PointCloud::Normal>{};
@@ -269,15 +290,15 @@ inline PointCloud fromPLY(std::string filename) {
                  [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
 
   normals = detail::getVertexNormals(plyIn);
-  return PointCloud(positions, normals);
+  return {positions, normals};
 }
 
 inline auto maximum_point_spacing(const PointCloud &cloud) noexcept {
   float max_spacing = 0;
 
   for (const auto &p : cloud.positions) {
-    const auto [_, dist] = cloud.tree->knn(p, 2)[0];
-    max_spacing = std::max(max_spacing, dist);
+    const auto [_, squared_dist] = cloud.tree->knn(p, 2)[0];
+    max_spacing = std::max(max_spacing, squared_dist);
   }
 
   return std::sqrt(max_spacing);
@@ -287,21 +308,24 @@ inline auto minimum_point_spacing(const PointCloud &cloud) noexcept {
   float min_spacing = std::numeric_limits<float>::max();
 
   for (const auto &p : cloud.positions) {
-    const auto [_, dist] = cloud.tree->knn(p, 2)[0];
-    min_spacing = std::min(min_spacing, dist);
+    const auto [_, squared_dist] = cloud.tree->knn(p, 2)[0];
+    min_spacing = std::min(min_spacing, squared_dist);
   }
 
   return std::sqrt(min_spacing);
 }
 
-inline auto average_point_spacing(const PointCloud &cloud) noexcept {
-  float avg_spacing = 0;
+inline float average_point_spacing(const PointCloud &cloud) noexcept {
+  float sum = 0.0f;
+  size_t n = cloud.positions.size();
+
   for (const auto &p : cloud.positions) {
-    const auto [_, dist] = cloud.tree->knn(p, 2)[0];
-    avg_spacing += dist;
+    const auto &neighbors = cloud.tree->knn(p, 1);
+    float dist_sqr = neighbors[0].second;
+    sum += std::sqrt(dist_sqr);
   }
-  avg_spacing /= (cloud.positions.size() * 2);
-  return std::sqrt(avg_spacing);
+
+  return sum / static_cast<float>(n);
 }
 
 inline PointCloud extrude(const PointCloud &p, float factor) {
@@ -309,7 +333,7 @@ inline PointCloud extrude(const PointCloud &p, float factor) {
   for (auto i = 0; i < extrudedPoints.size(); i++) {
     extrudedPoints[i] += factor * p.normals[i];
   }
-  return PointCloud(extrudedPoints, p.normals);
+  return {extrudedPoints, p.normals};
 }
 
 inline Eigen::Matrix4f quadric(const PointCloud &cloud, int idx,
@@ -319,13 +343,12 @@ inline Eigen::Matrix4f quadric(const PointCloud &cloud, int idx,
   auto &x = cloud.positions[idx];
   auto neighbors = cloud.tree->knn(x, kNeighbours, false);
 
-  for (auto [j, _] : neighbors) {
+  for (auto j : neighbors | std::views::keys) {
     auto n = cloud.normals[j];
     auto p = cloud.positions[j];
 
     auto d = -glm::dot(p, n);
     auto plane = Eigen::Vector4f(n.x, n.y, n.z, d);
-    // std::cout << "plane = \n" << plane << std::endl;
     A_qem += plane * plane.transpose();
   }
   return A_qem;
@@ -338,8 +361,8 @@ inline float curvature_estimate(const PointCloud &cloud, int idx,
   auto neighbors = cloud.tree->knn(x, kNeighbours, false);
 
   float max_angle = 1;
-  for (auto [i, _] : neighbors) {
-    for (auto [j, _] : neighbors) {
+  for (auto i : neighbors | std::views::keys) {
+    for (auto j : neighbors | std::views::keys) {
       auto n_i = cloud.normals[i];
       auto n_j = cloud.normals[j];
       max_angle = std::min(max_angle, glm::dot(n_i, n_j));

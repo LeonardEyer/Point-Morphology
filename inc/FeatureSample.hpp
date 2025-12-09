@@ -47,7 +47,7 @@ projectToFeature(const PointCloud::Position &p, const PointCloud::Normal &n,
       glm::vec3 p_projected = p_qem + glm::dot(p - p_qem, d_qem) * d_qem;
 
       // ensure we have nonzero length
-      assert(glm::dot(n, d_qem) * d_qem > 1e-8f);
+      assert(glm::length(glm::dot(n, d_qem) * d_qem) > 1e-8f);
       glm::vec3 n_projected = glm::normalize(n - glm::dot(n, d_qem) * d_qem);
 
       return std::pair{p_projected, n_projected};
