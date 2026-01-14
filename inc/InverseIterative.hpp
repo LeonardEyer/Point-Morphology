@@ -8,6 +8,7 @@
 #include <iostream>
 #include <vector>
 
+
 template <typename T> inline float rbfKernel(const T &x, const T &y) {
   return std::exp(-(x - y).squaredNorm());
 }
@@ -35,9 +36,10 @@ T importance_grad(const T &x, const std::vector<T> &neighbours,
   // a way of indexing the active ones
   auto neighboursFiltered = std::vector<T>();
   for (auto i = 0; i < neighbours.size(); i++) {
-    if (active[i]) {
-      neighboursFiltered.push_back(neighbours[i]);
+    if (!active[i]) {
+      continue; // skip inactive
     }
+    neighboursFiltered.push_back(neighbours[i]);
   }
 
   T sgrad = T::Zero();

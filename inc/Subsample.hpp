@@ -2,12 +2,13 @@
 
 #include "InverseIterative.hpp"
 #include "PointCloud.hpp"
-#include "Utils.hpp"
+#include "Embedding.hpp"
 
+template <ImportanceEmbedding Embedding>
 inline PointCloud subsample(const PointCloud &cloud, double distance,
-                            float sigmaP = 1.0f, float sigmaN = 1.0f,
-                            float eps = 0.5) {
+                            const Embedding &embedding, float eps = 0.5) {
 
+  
   auto sampled_positions = std::vector<PointCloud::Position>{};
   auto sampled_normals = std::vector<PointCloud::Normal>{};
   PointKDTree sampled = PointKDTree<true>(sampled_positions);
@@ -18,22 +19,23 @@ inline PointCloud subsample(const PointCloud &cloud, double distance,
   for (size_t i = 0; i < cloud.positions.size(); ++i) {
 
     glm::vec3 p = cloud.positions[i];
-    glm::vec3 n = cloud.normals[i];
-    auto x = util::concat(p / sigmaP, n / sigmaN);
 
     // we get sorted neighbours
     auto neighbors = sampled.neighboursInRadius(p, distance);
 
     double s = 1.0;
+
+    glm::vec3 n = cloud.normals[i];
+    auto x = embedding(p, n);
     if (!neighbors.empty()) {
-      std::vector<util::PointNormal> neighborPointNormals;
+      
+      std::vector<Feature6D> neighborPointNormals;
       for (auto &[idx, _] : neighbors) {
-        auto &np = sampled_positions[idx];
-        auto &nn = sampled_normals[idx];
-        neighborPointNormals.push_back(util::concat(np / sigmaP, nn / sigmaN));
+        neighborPointNormals.push_back(embedding(sampled_positions[idx], sampled_normals[idx]));
       }
 
       s = takeInverseIterative(x, neighborPointNormals, mem, rbfKernel, eps).s;
+      
     }
     if (s > eps) {
       sampled_positions.push_back(p);

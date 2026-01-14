@@ -277,18 +277,18 @@ struct Kernel {
   Eigen::VectorXd k;
 };
 
-util::PointNormal make6D(const PointCloud::Position &position,
-                         const PointCloud::Normal &normal) {
+util::Feature6D makePointNormal(const PointCloud::Position &position,
+                                const PointCloud::Normal &normal) {
   return util::concat(position / sigmaP, normal / sigmaN);
 }
 
-std::vector<util::PointNormal>
-make6D(const std::vector<PointCloud::Position> &positions,
-       const std::vector<PointCloud::Normal> &normals) {
-  auto result = std::vector<util::PointNormal>();
+util::Features6D
+makePointNormals(const std::vector<PointCloud::Position> &positions,
+                 const std::vector<PointCloud::Normal> &normals) {
+  auto result = std::vector<util::Feature6D>();
 
   for (auto i = 0; i < positions.size(); i++) {
-    result.push_back(make6D(positions[i], normals[i]));
+    result.push_back(makePointNormal(positions[i], normals[i]));
   }
 
   return result;
@@ -307,7 +307,7 @@ int main() {
   plane2->setTransform(
       glm::rotate(glm::mat4(1.0f), glm::radians(90.f), glm ::vec3(0, 1, 0)));
 
-  auto cloud = readNOFF("./resources/cone.txt");
+  auto cloud = readNOFF("./resources/cube.txt");
   {
     // Rescale to have bounding box of 100
     auto bounds = detail::computeBoundingBox(cloud.positions, 1);
@@ -316,7 +316,7 @@ int main() {
     cloud.scale(100 / scaling);
   }
 
-  auto cloud_sampled = subsample(cloud, radius, sigmaP, sigmaN);
+  auto cloud_sampled = subsample(cloud, radius, makePointNormal);
 
   auto subsampled = drawPointCloud("subsampled", cloud_sampled);
 
@@ -327,10 +327,11 @@ int main() {
                         apss.fit(p, radius));
     };
   };
-  const auto cloud_resampled =
-      resample(cloud_sampled, radius, sigmaP, sigmaN, resampling_iterations);
+  // const auto cloud_resampled =
+  //     resample(cloud_sampled, radius, makePointNormal,
+  //     resampling_iterations);
 
-  drawPointCloud("resampled", cloud_resampled);
+  // drawPointCloud("resampled", cloud_resampled);
 
   const auto bounds = detail::computeBoundingBox(cloud_sampled.positions, 1.5f);
 
@@ -349,22 +350,25 @@ int main() {
     }
 
     if (ImGui::Button("Show subsampling")) {
-      cloud_sampled = subsample(cloud, radius, sigmaP, sigmaN);
+      cloud_sampled = subsample(cloud, radius, makePointNormal);
       subsampled = drawPointCloud("subsampled", cloud_sampled);
       log_point_cloud_stats(cloud_sampled);
     }
     ImGui::InputInt("Resampling iterations", &resampling_iterations);
 
     if (ImGui::Button("Resample")) {
-      const auto cloud_resampled = resample(cloud_sampled, radius, sigmaP,
-                                            sigmaN, resampling_iterations);
+      const auto cloud_resampled = resample(
+          cloud_sampled, radius, makePointNormal, resampling_iterations);
 
       drawPointCloud("resampled", cloud_resampled);
       log_point_cloud_stats(cloud_resampled);
     }
 
-    if (ImGui::Button("Dilate")) {
+    if (ImGui::Button("Morphology (Dilation)")) {
+      static constexpr auto sdf = structuring_elements::sdf::cube;
+
       const auto denseSampling = sampleBoxVolume(bounds, sigmaP);
+
       std::cout << "Dense sampling count = " << denseSampling.size()
                 << std::endl;
       auto dilated_points = denseSampling;
@@ -389,9 +393,8 @@ int main() {
 
         // now we iteratively project
         auto [p, n] = structuring_elements::project_iterative<
-            structuring_elements::Operation::Dilation>(
-            apss, dilated_points[i], structuring_elements::sdf::sphere,
-            pse_scale);
+            structuring_elements::Dilation>(apss, dilated_points[i], sdf,
+                                            pse_scale);
 
         dilated_points[i] = p;
         dilated_normals[i] = n;
@@ -399,12 +402,32 @@ int main() {
 
       auto dilatedPointCloud = PointCloud(dilated_points, dilated_normals);
 
+      auto dilatedSubsampled =
+          subsample(dilatedPointCloud, radius, makePointNormal);
+
+      const auto makePointCentroid = [sigmaC = pse_scale, sdf = sdf,
+                                      &pss = apss](const auto &p,
+                                                   const auto &) {
+        const auto c = structuring_elements::fit(pss, p, sdf, sigmaC).c;
+        return util::concat(p / sigmaP, c / sigmaC);
+      };
+
+      // auto dilatedResampled = resample(
+      //     dilatedPointCloud, radius, makePointCentroid,
+      //     resampling_iterations);
+
+      const auto dilatedEdges =
+          subsample(edge_sample(dilatedSubsampled), radius, makePointNormal);
+
       drawPointCloud("dilated", dilatedPointCloud);
+      drawPointCloud("dilated subsampled", dilatedSubsampled);
+      //    drawPointCloud("dilated resampled", dilatedResampled);
+      drawPointCloud("dilated edges", dilatedEdges);
     }
 
     if (ImGui::Button("Feature detection")) {
       const auto edge_sampling =
-          subsample(edge_sample(cloud_sampled), radius, sigmaP, sigmaN);
+          subsample(edge_sample(cloud_sampled), radius, makePointNormal);
 
       drawPointCloud("Edge sampling", edge_sampling);
     }
@@ -467,14 +490,16 @@ int main() {
         neighbours_normals.push_back(cloud_sampled.normals[index]);
 
         auto importance =
-            rbfKernel(make6D(p, n), make6D(cloud_sampled.positions[index],
-                                           cloud_sampled.normals[index]));
+            rbfKernel(makePointNormal(p, n),
+                      makePointNormal(cloud_sampled.positions[index],
+                                      cloud_sampled.normals[index]));
 
         neighbours_importance.push_back(importance);
       }
 
-      auto pointNormal = make6D(p, n);
-      auto neighbours6D = make6D(neighbours_points, neighbours_normals);
+      auto pointNormal = makePointNormal(p, n);
+      auto neighbours6D =
+          makePointNormals(neighbours_points, neighbours_normals);
 
       auto kernelResult =
           takeInverseIterative(pointNormal, neighbours6D, rbfKernel, -1);

@@ -200,9 +200,9 @@ project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
 
     if (glm::distance2(xi, xip1) <= (eps * eps)) {
       // converged
-      if (i > 50)
-        std::cout << "converge at " << i
-                  << ", distance2 = " << distance2(xi, xip1) << std::endl;
+      // if (i > 50)
+      //   std::cout << "converge at " << i
+      //             << ", distance2 = " << distance2(xi, xip1) << std::endl;
 
       break;
     }

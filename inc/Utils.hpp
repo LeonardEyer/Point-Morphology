@@ -20,7 +20,7 @@ inline glm::vec3 to_glm(const Eigen::Vector3f &x) {
 inline Eigen::Vector3f to_eigen(const glm::vec3 &x) { return {x.x, x.y, x.z}; }
 
 using V6f = Eigen::Vector<float, 6>;
-using PointNormal = V6f;
-using PointNormals = std::vector<PointNormal>;
+using Feature6D = V6f;
+using Features6D = std::vector<Feature6D>;
 
 } // namespace util

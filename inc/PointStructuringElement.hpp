@@ -136,6 +136,24 @@ shift<Operation::Dilation>(const PointStructuringElement &pse,
   return p + delta;
 }
 
+template <>
+inline PointCloud::Position
+shift<Operation::Erosion>(const PointStructuringElement &pse,
+                          const PointCloud::Position &p, bool inside) {
+
+  // Only shift if we are outside
+  if (inside) {
+    return p;
+  }
+
+  auto distance = pse.c - p;
+  auto e_m = pse.s * 1.2f;
+
+  auto delta = e_m * glm::normalize(distance);
+
+  return p + delta;
+}
+
 template <Operation op>
 std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x,

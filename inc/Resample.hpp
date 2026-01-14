@@ -3,12 +3,14 @@
 #include <random>
 
 #include "APSS.hpp"
+#include "Embedding.hpp"
 #include "InverseIterative.hpp"
 #include "PointCloud.hpp"
 #include "Utils.hpp"
 
+template <ImportanceEmbedding Embedding>
 inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
-                           float sigmaP, float sigmaN, size_t iterations = 10) {
+                           const Embedding &embedding, size_t iterations = 10) {
 
   constexpr auto sigma = 1.0f;
 
@@ -46,21 +48,19 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
       size_t randIndex = indices[i];
 
       const auto &p = resampled_positions[randIndex];
-      const auto &n = resampled_normals[randIndex];
-      const auto x = util::concat(p / sigmaP, n / sigmaN);
-
       auto neighbours = resampled.neighboursInRadius(p, gaussianStd);
 
       if (neighbours.empty()) {
-        // std::cout << "No neighbours. skipping" << std::endl;
         continue;
       }
 
-      std::vector<util::PointNormal> neighbourPointNormals;
+      const auto &n = resampled_normals[randIndex];
+      const auto x = embedding(p, n);
+
+      std::vector<util::Feature6D> neighbourPointNormals;
       for (auto &[idx, _] : neighbours) {
         neighbourPointNormals.push_back(
-            util::concat(resampled_positions[idx] / sigmaP,
-                         resampled_normals[idx] / sigmaN));
+            embedding(resampled_positions[idx], resampled_normals[idx]));
       }
 
       const auto res =
@@ -76,13 +76,8 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
       auto [p_final, n_final] = project_iterative(apss, p_k, gaussianStd);
 
       // update pointcloud / kdtree
-      {
-        resampled_positions[randIndex] = p_final;
-        resampled_normals[randIndex] = n_final;
-
-        // resampled.adaptor.index->removePoint(randIndex);
-        // resampled.addPoints(randIndex, randIndex);
-      }
+      resampled_positions[randIndex] = p_final;
+      resampled_normals[randIndex] = n_final;
     }
   }
 
