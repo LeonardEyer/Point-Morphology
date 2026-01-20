@@ -20,7 +20,7 @@ const auto torus = [](const glm::vec3 &p) {
 };
 
 const auto cube = [](const glm::vec3 &p) {
-  const auto b = glm::vec3(0.5f);
+  const auto b = glm::vec3(1.0f);
   glm::vec3 d = glm::abs(p) - b; // distance along each axis
   float outsideDist =
       glm::length(glm::max(d, glm::vec3(0.0f))); // distance outside cube
@@ -64,6 +64,49 @@ struct PointStructuringElement {
   }
 };
 
+auto mean_shift(const glm::vec3 &x, std::vector<glm::vec3> candidates,
+                const auto &neighbours, // ranges view
+                const PointStructuringElement::SDF &sdf, float offset,
+                float scale) {
+  static constexpr auto sqEps = 1e-4 * 1e-4;
+  static constexpr auto maxIter = 20u;
+  auto diff = std::numeric_limits<float>::max();
+  auto iter = 0u;
+
+  const auto weightFunc = [scaleSq = scale * scale](const auto &x) {
+    return std::exp(-x / (2.0f * scaleSq));
+  };
+
+  for (auto &c_j : candidates) {
+    while (sqEps > diff && iter < maxIter) {
+      auto c_j_k = glm::vec3(0.);
+      auto denominator = 0.0f;
+
+      for (const auto &p_i : neighbours) {
+
+        const auto B_p = PointStructuringElement{scale, p_i, sdf}.distance(x);
+        const auto weight =
+            weightFunc(glm::length(c_j - p_i)) * weightFunc(B_p + offset);
+
+        c_j_k += weight * p_i;
+        denominator += weight;
+      }
+
+      // divide by zero check
+      if (denominator < 1e-9f)
+        break;
+
+      // mean
+      c_j_k /= denominator;
+
+      diff = std::min(diff, glm::distance2(c_j_k, c_j));
+      c_j = c_j_k;
+      iter++;
+    }
+  }
+  return candidates;
+}
+
 inline PointStructuringElement fit(const APSS &pss,
                                    const PointCloud::Position &x,
                                    const PointStructuringElement::SDF &sdf,
@@ -72,19 +115,19 @@ inline PointStructuringElement fit(const APSS &pss,
   // We aim to minimize (9)
 
   // 1. collect a point sampling PI of the implicit surface
-  const auto neighbours = pss.pointCloud.tree->knn(x, 2);
-
-  assert(neighbours.size() == 2);
+  const auto neighbours = pss.pointCloud.tree->knn(x, 20) |
+                          std::views::transform([&pss](const auto &x) {
+                            return pss.pointCloud.positions[x.first];
+                          });
 
   // 2. initialize mean shift with n (usually 2) meaningful points
   // {c_j^0} := {closest points in PI under PSE distance}
   const auto cj0 = [&] {
-    std::vector<std::pair<float, size_t>> distances;
+    std::vector<std::pair<float, glm::vec3>> distances;
     distances.reserve(neighbours.size());
-    for (const auto &[idx, _] : neighbours) {
-      auto xi = pss.pointCloud.positions[idx];
+    for (const auto &xi : neighbours) {
       auto pse = PointStructuringElement{scale, xi, sdf};
-      distances.emplace_back(pse.distance(x), idx);
+      distances.emplace_back(pse.distance(x), xi);
     }
 
     // we are looking at the 2 most meaningful points
@@ -93,23 +136,40 @@ inline PointStructuringElement fit(const APSS &pss,
         distances, distances.begin() + nth - 1,
         [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
 
-    auto cjs = std::vector<size_t>(nth);
+    auto cjs = std::vector<glm::vec3>(nth);
     for (auto i = 0; i < nth; i++) {
       cjs[i] = distances[i].second;
     }
     return cjs;
   }();
 
-  auto candidate =
-      PointStructuringElement{scale, pss.pointCloud.positions[cj0[0]], sdf};
+  //  return PointStructuringElement{scale, cj0[0], sdf};
 
-  return candidate;
-  // TODO mean shift
-  // TODO choose global minimizer from our converged points
+  const auto sdf_min = 1.0f;
+  const auto converged_candidates =
+      mean_shift(x, cj0, neighbours, sdf, sdf_min, scale);
+
+  // Choose Global Minimizer (Eq 11)
+  auto best_energy = std::numeric_limits<float>::max();
+  PointCloud::Position global_c = converged_candidates[0];
+
+  for (const auto &cand_c : converged_candidates) {
+    // Evaluate the PSE distance (B_c(x)) for this candidate
+    auto pse = PointStructuringElement{scale, cand_c, sdf};
+    float energy = std::abs(pse.distance(x));
+
+    if (energy < best_energy) {
+      best_energy = energy;
+      global_c = cand_c;
+    }
+  }
+
+  return PointStructuringElement{scale, global_c, sdf};
 }
 
 inline PointCloud::Position project(const PointStructuringElement &pse,
                                     const PointCloud::Position &p) {
+  // How do we handle the adjoint case if pse is not spherical??
   return p - pse.distance(p) * pse.gradient(p);
 }
 
@@ -124,12 +184,13 @@ inline PointCloud::Position
 shift<Operation::Dilation>(const PointStructuringElement &pse,
                            const PointCloud::Position &p, bool inside) {
 
+  // Only shift if we are inside
   if (!inside) {
     return p;
   }
 
   auto distance = pse.c - p;
-  auto e_m = pse.s * 1.2f;
+  auto e_m = pse.s * 1.1f;
 
   auto delta = e_m * glm::normalize(distance);
 
@@ -147,7 +208,7 @@ shift<Operation::Erosion>(const PointStructuringElement &pse,
   }
 
   auto distance = pse.c - p;
-  auto e_m = pse.s * 1.2f;
+  auto e_m = pse.s * 1.1f;
 
   auto delta = e_m * glm::normalize(distance);
 
@@ -157,17 +218,17 @@ shift<Operation::Erosion>(const PointStructuringElement &pse,
 template <Operation op>
 std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x,
-                  const PointStructuringElement::SDF &sdf, float pse_scale) {
-
-  static constexpr auto threshold = 1e-8f;
-  static constexpr auto maxIter = 100;
+                  const PointStructuringElement::SDF &sdf, float pse_scale,
+                  unsigned maxIter = 100, float threshold = 1e-4f) {
 
   const auto P = [&pss, &sdf, pse_scale](const auto &p) {
     auto fitted = fit(pss, p, sdf, pse_scale);
 
     // compute indicator function for shift procedure
     // TODO: Speed up indicator function computation
-    auto inside = pss.evaluate_surface(p, .5f) <= 0;
+    // remark: we add a bufer zone of the pse_scale to make sure that we are not
+    // "inside" the PSE
+    auto inside = pss.evaluate_surface(p, pse_scale) <= (pse_scale / 2);
 
     // shift then project
     return project(fitted, shift<op>(fitted, p, inside));
