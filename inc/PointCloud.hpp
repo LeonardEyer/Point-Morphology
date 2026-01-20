@@ -191,7 +191,11 @@ template <bool IsDynamic> struct PointKDTree {
   }
 
   void addPoints(size_t from, size_t to) const {
-    adaptor.index->addPoints(from, to);
+    if constexpr (IsDynamic) {
+      adaptor.index->addPoints(from, to);
+    } else {
+      throw std::runtime_error("Cannot add points to static tree");
+    }
   }
 };
 
