@@ -33,9 +33,16 @@ FetchContent_Declare(
    GIT_REPOSITORY https://github.com/LeonardEyer/nanoflann.git
    GIT_TAG        LeonardEyer-fix-dynamic-tree-sorted
 )
+
+FetchContent_Declare(
+   ssg
+   GIT_REPOSITORY https://codeberg.org/LeonardEyer/ssg.git
+   GIT_TAG        v0.1
+)
+
 set(NANOFLANN_BUILD_EXAMPLES OFF)
 
-FetchContent_MakeAvailable(polyscope libigl happly nanoflann)
+FetchContent_MakeAvailable(polyscope libigl happly nanoflann ssg)
 
 
 # Header-only interface target
@@ -50,6 +57,7 @@ target_link_libraries(pointmorph INTERFACE
     polyscope
     Eigen3::Eigen
     nanoflann::nanoflann
+    ssg::ssg_lib
 )
 
 file(GLOB SOURCES "src/*.cpp")
