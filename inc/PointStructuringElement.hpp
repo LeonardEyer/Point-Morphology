@@ -70,15 +70,16 @@ auto mean_shift(const glm::vec3 &x, std::vector<glm::vec3> candidates,
                 float scale) {
   static constexpr auto sqEps = 1e-4 * 1e-4;
   static constexpr auto maxIter = 20u;
-  auto diff = std::numeric_limits<float>::max();
-  auto iter = 0u;
-
-  const auto weightFunc = [scaleSq = scale * scale](const auto &x) {
+  
+  const auto weightFunc = [scaleSq = scale * scale](const auto &x) -> float {
     return std::exp(-x / (2.0f * scaleSq));
   };
 
   for (auto &c_j : candidates) {
-    while (sqEps > diff && iter < maxIter) {
+    auto diff = std::numeric_limits<float>::max();
+    auto iter = 0u;
+  
+    while (diff > sqEps && iter < maxIter) {
       auto c_j_k = glm::vec3(0.);
       auto denominator = 0.0f;
 
@@ -86,7 +87,7 @@ auto mean_shift(const glm::vec3 &x, std::vector<glm::vec3> candidates,
 
         const auto B_p = PointStructuringElement{scale, p_i, sdf}.distance(x);
         const auto weight =
-            weightFunc(glm::length(c_j - p_i)) * weightFunc(B_p + offset);
+	  weightFunc(glm::length2(c_j - p_i)) * weightFunc(pow(B_p + offset, 2));
 
         c_j_k += weight * p_i;
         denominator += weight;
@@ -142,8 +143,6 @@ inline PointStructuringElement fit(const APSS &pss,
     }
     return cjs;
   }();
-
-  //  return PointStructuringElement{scale, cj0[0], sdf};
 
   const auto sdf_min = 1.0f;
   const auto converged_candidates =
