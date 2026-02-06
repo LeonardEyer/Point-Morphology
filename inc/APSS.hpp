@@ -4,15 +4,13 @@
 #include "Utils.hpp"
 
 #include <Eigen/Dense>
-#include <arm_neon.h>
+#include <cmath>
+#include <glm/geometric.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtx/norm.hpp>
 #include <limits>
+#include <stdexcept>
 #include <variant>
-
-template <typename T> constexpr int sgn(T val) noexcept {
-  return (T(0) < val) - (val < T(0));
-}
 
 struct FitParams {
   float u0;
@@ -24,7 +22,7 @@ struct FitParams {
 
   [[nodiscard]] constexpr int
   apssign(const PointCloud::Position &x) const noexcept {
-    return sgn(u0 + glm::dot(x, u_mid) + glm::dot(x, x) * u_d1);
+    return std::copysign(1, u0 + glm::dot(x, u_mid) + glm::dot(x, x) * u_d1);
   }
 };
 
@@ -44,7 +42,12 @@ struct SphereFitResult : FitResult {
 };
 
 struct PlaneFitResult : FitResult {
-  explicit PlaneFitResult(const FitParams &_params) : FitResult(_params) {}
+  glm::vec3 normal{}; // normalized plane normal
+  float d;            // plane offset (n·x + d = 0)
+
+  explicit PlaneFitResult(const FitParams &_params)
+      : FitResult(_params), normal(glm::normalize(_params.u_mid)),
+        d(_params.u0) {}
 };
 
 inline constexpr float distance(const SphereFitResult &fit,
@@ -61,22 +64,32 @@ inline constexpr float distance(const PlaneFitResult &fit,
 }
 
 inline PointCloud::Position gradient(const SphereFitResult &fit,
-                                     const PointCloud::Position &x) noexcept {
+                                     const PointCloud::Position &x) {
   auto v = x - fit.center;
-  float len = glm::length(v);
-  if (len > 0.0f) {
-    return v / len; // unit vector pointing away from center
-  } else {
-    return {1.0f, 0.0f, 0.0f}; // arbitrary direction
+
+  if (glm::length2(v) == 0.0f) {
+    throw std::runtime_error("Degenerate gradient for SphereFitResult");
   }
+  v = glm::normalize(v);
+
+  // if we go in the gradient direction we expect a positive sign?.
+  // i guess this only makes sense if we expect x to be close to the surface
+  if (fit.params.apssign(x + v) < 0) {
+    v *= -1;
+  }
+
+  return v;
 }
 
 inline PointCloud::Position gradient(const PlaneFitResult &fit,
-                                     const PointCloud::Position &p) noexcept {
-  auto n = fit.params.u_mid;
+                                     const PointCloud::Position &p) {
+  auto n = fit.normal;
   float len = glm::length(n);
-  return (len > 0.0f) ? n / len
-                      : glm::vec3(1.0f, 0.0f, 0.0f); // arbitrary if degenerate
+
+  if (len > 0.0f) {
+    return n / len;
+  }
+  throw std::runtime_error("Degenerate gradient for PlaneFitResult");
 }
 
 template <typename T>
@@ -184,9 +197,9 @@ inline std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
                   size_t maxIter = 100) {
   const auto spacing = pss.pointCloud.getNeighbourSpacing(x, 6);
-  static const auto eps = 1e-4f * spacing;
+  const auto eps = 1e-4f * spacing;
 
-  const auto P = [&pss, h = scale](const auto &p) {
+  const auto P = [&pss, h = scale, eps](const auto &p) {
     auto fitted = pss.fit(p, h);
     return std::visit(
         [&p](const auto &fitvariant) { return project(fitvariant, p); },
@@ -198,14 +211,11 @@ project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
 
   for (auto i = 0; i < maxIter; i++) {
 
-    if (glm::distance2(xi, xip1) <= (eps * eps)) {
-      // converged
-      // if (i > 50)
-      //   std::cout << "converge at " << i
-      //             << ", distance2 = " << distance2(xi, xip1) << std::endl;
-
+    if (!std::isfinite(glm::distance2(xi, xip1)))
       break;
-    }
+
+    if (glm::distance2(xi, xip1) <= (eps * eps))
+      break;
 
     xi = xip1;
     xip1 = P(xip1);

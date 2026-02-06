@@ -70,16 +70,15 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
     std::shuffle(indices.begin(), indices.end(), rng);
 
     for (auto i = 0; i < nPoints; ++i) {
+      if (i != 0 && i % 10000 == 0) {
+        std::cout << "Progress (i = " << i << ", iter = " << iter << ") = "
+                  << (iter * nPoints + i + 1) /
+                         static_cast<float>(iterations * nPoints)
+                  << std::endl;
+      }
       size_t randIndex = indices[i];
       const auto &p = resampled_positions[randIndex];
 
-      if (i != 0 && i % 10000 == 0) {
-      std::cout << "Progress (i = " << i << ", iter = " << iter << ") = "
-                << (iter * nPoints + i + 1) /
-                       static_cast<float>(iterations * nPoints)
-                << ", index = " << randIndex << " p = [" << p.x << ", " << p.y
-                << ", " << p.z << "]" << std::endl;
-      }
       // choose a random index
       auto neighbours = resampled.inRadius(p, gaussianStd, true);
 
@@ -105,7 +104,7 @@ inline PointCloud resample(const PointCloud &cloud, double gaussianStd,
       auto grad_p = util::to_glm(grad.head(3));
 
       if (glm::length2(grad_p) >= 1) {
-	grad_p = glm::normalize(grad_p) * 0.1f;
+        grad_p = glm::normalize(grad_p) * 0.1f;
       }
 
       // gradient step

@@ -95,7 +95,7 @@ struct Vec3Adaptor {
   const std::vector<glm::vec3> &pts;
 
   explicit Vec3Adaptor(const std::vector<glm::vec3> &points,
-                       const unsigned int n_thread_build = 1)
+                       const unsigned int n_thread_build = 0)
       : pts(points) {
 
     index = new index_t(3, *this /* adaptor */,
@@ -127,7 +127,7 @@ template <bool IsDynamic> struct PointKDTree {
 
   Adaptor adaptor;
 
-  PointKDTree(const std::vector<glm::vec3> &points) : adaptor(points, 8) {};
+  PointKDTree(const std::vector<glm::vec3> &points) : adaptor(points) {};
 
   auto neighboursInRadius(const glm::vec3 &p, float radius,
                           bool sorted = true) const {
