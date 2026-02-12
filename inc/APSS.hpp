@@ -118,16 +118,11 @@ struct APSS {
     };
 
     // reference to h
-    const auto weight = [&h, spacing](const auto &norm) {
+    const auto weight = [spacing](float h, const auto &norm) {
       return phi(norm / (h * spacing));
     };
 
-    auto neighbours = pointCloud.getWeightedPoints(x, 20, weight);
-
-    while (neighbours.empty()) {
-      h *= 1.5;
-      neighbours = pointCloud.getWeightedPoints(x, 20, weight);
-    }
+    const auto neighbours = pointCloud.getWeightedPoints(x, 20, h, weight);
 
     // Weighted sums initialization
     double Sw = 0.0f;
@@ -221,9 +216,7 @@ project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
     xip1 = P(xip1);
   }
 
-  const auto normal = std::visit(
-      [&x = xip1](const auto &variant) { return gradient(variant, x); },
-      pss.fit(xip1, scale));
+  const auto normal = pss.evaluate_gradient(x, scale);
 
   return {xip1, normal};
 }

@@ -5,6 +5,32 @@
 
 namespace util {
 
+struct SSGAdaptor {
+  using VectorType = glm::vec3;
+  using DataType = std::vector<VectorType>;
+  using IndexType = size_t;
+
+  static float get_x(const VectorType &v) { return v[0]; }
+  static float get_y(const VectorType &v) { return v[1]; }
+  static float get_z(const VectorType &v) { return v[2]; }
+  static const VectorType &get_vec(const DataType &data, IndexType idx) {
+    return data[idx];
+  }
+  static float distance2(const VectorType &a, const VectorType &b) {
+    float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  static IndexType insert(DataType &d, const VectorType &v) {
+    d.push_back(v);
+    return d.size() - 1;
+  }
+
+  static void update(DataType &d, IndexType idx, const VectorType &v) {
+    d[idx] = v;
+  }
+};
+
 inline auto concat(const glm::vec3 &a, const glm::vec3 &b) {
   return Eigen::Vector<float, 6>{a.x, a.y, a.z, b.x, b.y, b.z};
 }
