@@ -33,7 +33,7 @@ inline std::vector<glm::vec3> getVertexNormals(happly::PLYData &plyIn) {
     normals.reserve(nxs.size());
 
     for (auto i = 0; i < nxs.size(); i++) {
-      normals.emplace_back(nxs[i], nys[i], nzs[i]);
+      normals.emplace_back(glm::normalize(glm::vec3(nxs[i], nys[i], nzs[i])));
     }
 
   } catch (...) {
@@ -45,18 +45,16 @@ inline std::vector<glm::vec3> getVertexNormals(happly::PLYData &plyIn) {
 using Bounds = std::pair<glm::vec3, glm::vec3>;
 
 inline Bounds computeBoundingBox(const std::vector<glm::vec3> &points,
-                                 float scaling = 1.0f) {
+                                 float margin) {
   auto min = glm::vec3(std::numeric_limits<float>::max());
   auto max = glm::vec3(-std::numeric_limits<float>::max());
 
   for (const auto &p : points) {
-    min = glm::vec3(std::min(min.x, p.x), std::min(min.y, p.y),
-                    std::min(min.z, p.z));
-    max = glm::vec3(std::max(max.x, p.x), std::max(max.y, p.y),
-                    std::max(max.z, p.z));
+    min = glm::min(min, p);
+    max = glm::max(max, p);
   }
 
-  return Bounds(min * scaling, max * scaling);
+  return Bounds(min - glm::vec3(margin), max + glm::vec3(margin));
 }
 
 inline std::vector<glm::vec3> center(const std::vector<glm::vec3> &points) {
@@ -139,6 +137,29 @@ template <bool IsDynamic> struct PointKDTree {
     nanoflann::SearchParameters searchParams(0, sorted);
 
     adaptor.index->findNeighbors(resultSet, query_p, searchParams);
+
+    // Remove self from results
+    if (!results.empty() && adaptor.pts[results[0].first] == p) {
+      results.erase(results.begin());
+    }
+
+    return results;
+  }
+
+  auto neighboursInRadius(const glm::vec3 &p, float radius, size_t minimum,
+                          bool sorted = true) const {
+
+    Scalar query_p[3] = {p.x, p.y, p.z};
+    std::vector<nanoflann::ResultItem<size_t, Scalar>> results;
+
+    while (results.size() <= minimum) {
+      nanoflann::RadiusResultSet resultSet(radius * radius, results);
+      nanoflann::SearchParameters searchParams(0, sorted);
+      adaptor.index->findNeighbors(resultSet, query_p, searchParams);
+
+      // grow radius
+      radius *= 1.2;
+    }
 
     // Remove self from results
     if (!results.empty() && adaptor.pts[results[0].first] == p) {
@@ -248,6 +269,17 @@ struct PointCloud {
     return *this;
   }
 
+  // Pointcloud union
+  PointCloud operator&(const PointCloud &a) const noexcept {
+    auto newPositions = positions;
+    auto newNormals = normals;
+
+    newPositions.insert(newPositions.end(), a.positions.begin(),
+                        a.positions.end());
+    newNormals.insert(newNormals.end(), a.normals.begin(), a.normals.end());
+    return PointCloud(newPositions, newNormals);
+  }
+
   [[nodiscard]] inline float getNeighbourSpacing(const Position &p,
                                                  size_t k) const {
     const auto neighbours = tree->knn(p, k);
@@ -264,13 +296,22 @@ struct PointCloud {
   }
 
   template <typename WeightFunc>
-  [[nodiscard]] inline auto getWeightedPoints(const Position &p, size_t k,
+  [[nodiscard]] inline auto getWeightedPoints(const Position &p, size_t k, float h,
                                 const WeightFunc &weightFunc) const {
 
     auto weightedResult = std::vector<std::pair<size_t, float>>();
 
-    for (const auto &[i, norm] : tree->knn(p, k)) {
-      auto weight = weightFunc(norm);
+    // sorted
+    const auto queryResult = tree->knn(p, k);
+
+    while (weightFunc(h, queryResult[0].second) <
+        10.f * std::numeric_limits<float>::epsilon()) {
+      // we need to increase the weighting
+      h *= 1.1f;
+    }
+
+    for (const auto &[i, norm] : queryResult) {
+      auto weight = weightFunc(h, norm);
       if (weight > 10.0 * std::numeric_limits<float>::epsilon()) {
         weightedResult.push_back(std::make_pair(i, weight));
       }
@@ -292,6 +333,8 @@ inline PointCloud fromPLY(const std::string &filename) {
   std::transform(vertices.begin(), vertices.end(),
                  std::back_inserter(positions),
                  [](const auto &v) { return glm::vec3{v[0], v[1], v[2]}; });
+
+  positions = detail::center(positions);
 
   normals = detail::getVertexNormals(plyIn);
   return {positions, normals};

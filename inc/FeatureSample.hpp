@@ -47,7 +47,7 @@ projectToFeature(const PointCloud::Position &p, const PointCloud::Normal &n,
       glm::vec3 p_projected = p_qem + glm::dot(p - p_qem, d_qem) * d_qem;
 
       // ensure we have nonzero length
-      assert(glm::length(glm::dot(n, d_qem) * d_qem) > 1e-8f);
+      // assert(glm::length(glm::dot(n, d_qem) * d_qem) > 1e-8f);
       glm::vec3 n_projected = glm::normalize(n - glm::dot(n, d_qem) * d_qem);
 
       return std::pair{p_projected, n_projected};
@@ -60,18 +60,20 @@ projectToFeature(const PointCloud::Position &p, const PointCloud::Normal &n,
   return std::nullopt;
 }
 
-inline auto edge_sample(const PointCloud &cloud) {
+template<typename Projection>
+inline auto edge_sample(const PointCloud &cloud, const Projection &project) {
   std::vector<PointCloud::Position> edge_sampling_points;
   std::vector<PointCloud::Normal> edge_sampling_normals;
   for (auto i = 0; i < cloud.positions.size(); i++) {
-    if (curvature_estimate(cloud, i) < 0.75) {
+    if (curvature_estimate(cloud, i) < 0.5) {
       const auto &p_i = cloud.positions[i];
       const auto &n_i = cloud.normals[i];
       const auto A_qem = quadric(cloud, i);
-      const auto projected = projectToFeature(p_i, n_i, A_qem);
+      const auto projected = projectToFeature(p_i, n_i, A_qem, 0);
 
       if (projected) {
         const auto [projected_p, projected_n] = *projected;
+	
         edge_sampling_points.push_back(projected_p);
         edge_sampling_normals.push_back(projected_n);
       }

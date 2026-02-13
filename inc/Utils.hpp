@@ -5,6 +5,21 @@
 
 namespace util {
 
+  template<typename Func>
+glm::vec3 gradient(const glm::vec3 &x, const Func &func, float eps = 1) {
+   
+    // basis
+    const auto ex = glm::vec3(eps, 0, 0);
+    const auto ey = glm::vec3(0, eps, 0);
+    const auto ez = glm::vec3(0, 0, eps);
+
+    float dx = (func(x + ex) - func(x - ex)) / (2.0f * eps);
+    float dy = (func(x + ey) - func(x - ey)) / (2.0f * eps);
+    float dz = (func(x + ez) - func(x - ez)) / (2.0f * eps);
+
+    return glm::vec3(dx, dy, dz);
+}
+
 struct SSGAdaptor {
   using VectorType = glm::vec3;
   using DataType = std::vector<VectorType>;

@@ -124,6 +124,19 @@ struct APSS {
 
     const auto neighbours = pointCloud.getWeightedPoints(x, 20, h, weight);
 
+    float minDistSq = neighbours[0].second;
+    float maxAllowedDist = h * spacing * 2.0f; 
+
+    if (minDistSq > (maxAllowedDist * maxAllowedDist)) {
+      
+      auto n = pointCloud.normals[neighbours[0].first];
+      auto p = pointCloud.positions[neighbours[0].first];
+
+      FitParams params{-glm::dot(n, p), n, 0};
+
+      return PlaneFitResult(params);
+    }
+
     // Weighted sums initialization
     double Sw = 0.0f;
     double Swnp = 0.0f;
@@ -187,7 +200,6 @@ struct APSS {
   }
 };
 
-// TODO: Validate implementaiton. seems to be quite unstable
 inline std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
                   size_t maxIter = 100) {
