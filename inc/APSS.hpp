@@ -50,13 +50,13 @@ struct PlaneFitResult : FitResult {
         d(_params.u0) {}
 };
 
-inline constexpr float distance(const SphereFitResult &fit,
+inline float distance(const SphereFitResult &fit,
                                 const PointCloud::Position &x) noexcept {
   auto sdval = std::fabs(glm::length(fit.center - x) - fit.radius);
   return sdval * fit.params.apssign(x);
 }
 
-inline constexpr float distance(const PlaneFitResult &fit,
+inline float distance(const PlaneFitResult &fit,
                                 const PointCloud::Position &x) noexcept {
   auto sdval = std::fabs(glm::dot(x, fit.params.u_mid) + fit.params.u0) /
                glm::length(fit.params.u_mid);
