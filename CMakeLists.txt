@@ -37,7 +37,7 @@ FetchContent_Declare(
 FetchContent_Declare(
    ssg
    GIT_REPOSITORY https://codeberg.org/LeonardEyer/ssg.git
-   GIT_TAG        v0.1
+   GIT_TAG        v0.2
 )
 
 set(NANOFLANN_BUILD_EXAMPLES OFF)
