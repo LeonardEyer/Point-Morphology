@@ -2,8 +2,10 @@
 
 #include "PointCloud.hpp"
 #include "Utils.hpp"
+
 #include <cassert>
 #include <csignal>
+#include <glm/glm.hpp>
 #include <optional>
 
 inline std::optional<std::pair<PointCloud::Position, PointCloud::Normal>>
@@ -16,7 +18,6 @@ projectToFeature(const PointCloud::Position &p, const PointCloud::Normal &n,
   // The minimization problem is A * x = -b
   Eigen::Matrix3f A = A_qem.block<3, 3>(0, 0);
   Eigen::Vector3f b = A_qem.block<3, 1>(0, 3);
-
   Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(A);
   if (solver.info() != Eigen::Success) {
     return std::nullopt;
@@ -39,6 +40,11 @@ projectToFeature(const PointCloud::Position &p, const PointCloud::Normal &n,
       }
     }
 
+    if (glm::length2(glm::dot(n, util::to_glm(d_qem)) * util::to_glm(d_qem)) <=
+        1e-8f) {
+      return std::nullopt;
+    };
+
     // project onto line [p_qem, d_qem]
     const auto [p_projected, n_projected] = [p_qem = util::to_glm(p_qem_eigen),
                                              d_qem = util::to_glm(d_qem), &p,
@@ -48,6 +54,7 @@ projectToFeature(const PointCloud::Position &p, const PointCloud::Normal &n,
 
       // ensure we have nonzero length
       // assert(glm::length(glm::dot(n, d_qem) * d_qem) > 1e-8f);
+
       glm::vec3 n_projected = glm::normalize(n - glm::dot(n, d_qem) * d_qem);
 
       return std::pair{p_projected, n_projected};
@@ -60,7 +67,7 @@ projectToFeature(const PointCloud::Position &p, const PointCloud::Normal &n,
   return std::nullopt;
 }
 
-template<typename Projection>
+template <typename Projection>
 inline auto edge_sample(const PointCloud &cloud, const Projection &project) {
   std::vector<PointCloud::Position> edge_sampling_points;
   std::vector<PointCloud::Normal> edge_sampling_normals;
@@ -69,11 +76,11 @@ inline auto edge_sample(const PointCloud &cloud, const Projection &project) {
       const auto &p_i = cloud.positions[i];
       const auto &n_i = cloud.normals[i];
       const auto A_qem = quadric(cloud, i);
-      const auto projected = projectToFeature(p_i, n_i, A_qem, 0);
+      const auto projected = projectToFeature(p_i, n_i, A_qem, 10);
 
       if (projected) {
         const auto [projected_p, projected_n] = *projected;
-	
+
         edge_sampling_points.push_back(projected_p);
         edge_sampling_normals.push_back(projected_n);
       }
