@@ -138,11 +138,6 @@ template <bool IsDynamic> struct PointKDTree {
 
     adaptor.index->findNeighbors(resultSet, query_p, searchParams);
 
-    // Remove self from results
-    if (!results.empty() && adaptor.pts[results[0].first] == p) {
-      results.erase(results.begin());
-    }
-
     return results;
   }
 
@@ -159,11 +154,6 @@ template <bool IsDynamic> struct PointKDTree {
 
       // grow radius
       radius *= 1.2;
-    }
-
-    // Remove self from results
-    if (!results.empty() && adaptor.pts[results[0].first] == p) {
-      results.erase(results.begin());
     }
 
     return results;
@@ -246,9 +236,15 @@ struct PointCloud {
 
   void scale(float scaling) {
     std::transform(positions.begin(), positions.end(), positions.begin(),
-                   [scaling](auto &p) { return p * scaling; });
+                   [&](auto &p) { return p * scaling; });
   }
 
+  void translate(glm::vec3 translation) {
+       std::transform(positions.begin(), positions.end(), positions.begin(),
+                   [&](auto &p) { return p + translation; });
+ 
+  }
+  
   PointCloud() { tree = std::make_unique<KDTreeT>(positions); };
 
   // Delete copy constructor
