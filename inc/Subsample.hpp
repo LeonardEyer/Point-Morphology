@@ -41,7 +41,7 @@ inline PointCloud subsample(const PointCloud &cloud, double radius,
       std::vector<Feature6D> neighborPointNormals;
       for (auto idx : neighbors) {
         neighborPointNormals.push_back(
-            embedding(sampled_positions[idx], sampled_normals[idx]));
+				       embedding(sampled_positions[idx], sampled_normals[idx]));
       }
 
       s = takeInverseIterative(x, neighborPointNormals, mem, rbfKernel, eps).s;

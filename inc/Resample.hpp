@@ -11,10 +11,9 @@
 #include "Utils.hpp"
 
 template <ImportanceEmbedding Embedding, typename ProjectionFn>
-inline PointCloud resample(const PointCloud &cloud, double radius,
-                           const Embedding &embedding,
-                           const ProjectionFn &project,
-                           size_t iterations = 10) {
+inline PointCloud
+resample(const PointCloud &cloud, double radius, const Embedding &embedding,
+         const ProjectionFn &project, size_t iterations = 10) {
 
   constexpr auto sigma = 1.0f;
 
@@ -24,16 +23,18 @@ inline PointCloud resample(const PointCloud &cloud, double radius,
   std::cout << "Resampling n = " << cloud.positions.size() << " positions"
             << std::endl;
 
-  // auto resampled2 = PointKDTree<false>(resampled_positions);
-
   auto resampled = ssg::SSG<util::SSGAdaptor>(resampled_positions, radius);
 
   const auto nPoints = resampled_positions.size();
 
+  std::vector<util::Feature6D> embeddings(nPoints);
+  for (auto i = 0; i < nPoints; ++i) {
+    embeddings[i] = embedding(resampled_positions[i], resampled_normals[i]);
+  };
+
   std::mt19937 rng(1337);
 
   auto mem = PreallocatedMemory(256);
-
   for (auto iter = 0; iter < iterations; ++iter) {
 
     // Create a list of indices 0 .. nPoints-1
@@ -61,13 +62,11 @@ inline PointCloud resample(const PointCloud &cloud, double radius,
         continue;
       }
 
-      const auto &n = resampled_normals[randIndex];
-      const auto x = embedding(p, n);
+      const auto x = embeddings[randIndex];
 
       std::vector<util::Feature6D> neighbourFeatures;
       for (auto idx : neighbours) {
-        neighbourFeatures.push_back(
-            embedding(resampled_positions[idx], resampled_normals[idx]));
+        neighbourFeatures.push_back(embeddings[idx]);
       }
 
       const auto [_, K, k, active] =
@@ -90,8 +89,10 @@ inline PointCloud resample(const PointCloud &cloud, double radius,
       // update pointcloud
       resampled.update(randIndex, p_final);
       resampled_normals[randIndex] = n_final;
+
+      embeddings[randIndex] = embedding(p_final, n_final);
     }
   }
 
-  return PointCloud(resampled_positions, resampled_normals);
+  return {resampled_positions, resampled_normals};
 }

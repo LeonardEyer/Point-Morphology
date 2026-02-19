@@ -106,7 +106,14 @@ auto morph(const APSS &original_apss, const ::detail::Bounds &bounds,
   const auto denseSampling = morphology::detail::sampleBoxVolume(
       bounds, sigmaP, [&](const auto &sample) {
         auto dist = original_apss.evaluate_surface(sample, pss_scale);
-        return !(dist > pse_scale / 2 && dist < pse_scale);
+
+        if constexpr (op == structuring_elements::Erosion) {
+          dist += pse_scale; // Sample close to dilation surface
+        } else if constexpr (op == structuring_elements::Dilation) {
+          dist -= pse_scale;
+        }
+
+        return std::abs(dist) > 2 * sigmaP;
       });
 
   drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
@@ -114,6 +121,7 @@ auto morph(const APSS &original_apss, const ::detail::Bounds &bounds,
 
   auto morphed_points = denseSampling;
   auto morphed_normals = std::vector<PointCloud::Normal>(morphed_points.size());
+  
   // now we want to project the extruded points down onto the dilation
 
   unsigned numThreads = std::thread::hardware_concurrency();

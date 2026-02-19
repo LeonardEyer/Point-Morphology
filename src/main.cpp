@@ -8,9 +8,12 @@
 #include "Resample.hpp"
 #include "Subsample.hpp"
 #include "Utils.hpp"
+#include "polyscope/screenshot.h"
 
 #include <atomic>
+#include <cassert>
 #include <cmath>
+#include <functional>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_access.hpp>
@@ -106,7 +109,7 @@ template <typename SDFFunc>
 void addVolumeGridByResolution(const std::string &name,
                                const detail::Bounds &bounds, const SDFFunc &sdf,
                                const size_t resolution = 50) {
-  
+
   auto &[minBound, maxBound] = bounds;
 
   uint32_t dimX = resolution;
@@ -206,7 +209,7 @@ float mean_shift_search_radius = pse_scale;
 
 bool pss_use_spacing = false;
 
-static const char *pse_shapes[]{"Sphere", "Cube"};
+static const char *pse_shapes[]{"Sphere", "Cube", "Torus", "Pointcloud"};
 int selected_pse = 0;
 
 static const char *morphology_operations[]{"Dilation", "Erosion"};
@@ -238,7 +241,7 @@ void importance_debug_view(const auto &cloud_sampled, const auto &embedding,
                            const auto &project, const auto &p, const auto &n,
                            bool showEmbedding) {
 
-  auto neighbours = cloud_sampled.tree->neighboursInRadius(p, radius);
+  auto neighbours = cloud_sampled.tree->neighboursInRadius(p, radius * sigmaP);
 
   // remove oneself
   neighbours.erase(neighbours.begin());
@@ -375,9 +378,11 @@ int main() {
       glm::rotate(glm::mat4(1.0f), glm::radians(90.f), glm ::vec3(0, 1, 0)));
   plane2->setActive(false);
 
-  //auto cloud = readNOFF("./resources/dilated resampled.txt");
-
-  auto cloud = fromPLY("./resources/hand.ply");
+  // auto cloud = readNOFF("./resources/4: Morphology (final).txt");
+  // auto cloud = readNOFF("./resources/cone.txt");
+  // auto cloud = readNOFF("./resources/cube.txt");
+  auto cloud = fromPLY("./resources/hand2.ply");
+  // auto cloud = fromPLY("./resources/bunny.ply");
   {
     // Rescale to have bounding box of 100
     auto bounds = detail::computeBoundingBox(cloud.positions, 1);
@@ -386,20 +391,29 @@ int main() {
     cloud.scale(100 / scaling);
   }
 
-  auto cloud_sampled = subsample(cloud, radius, makePointNormal);
+  auto cloud_sampled =
+      std::move(cloud); // subsample(cloud, radius, makePointNormal);
   auto subsampled = drawPointCloud("subsampled", cloud_sampled);
-
-  const auto original_apss = APSS(cloud_sampled);
-  const auto original_sdf = [&original_apss,
-                             &pss_scale = pss_scale](const auto &p) {
-    return std::visit([&p](const auto &fit) { return distance(fit, p); },
-                      original_apss.fit(p, pss_scale));
-  };
 
   auto bounds =
       detail::computeBoundingBox(cloud_sampled.positions, pse_scale * 1.5);
 
+  // Compute bounding box of the original cloud
+  auto small_bounds = detail::computeBoundingBox(cloud_sampled.positions, 1);
+  glm::vec3 minB = bounds.first;
+  glm::vec3 maxB = bounds.second;
+  glm::vec3 center = (minB + maxB) * 0.5f;
+  glm::vec3 diff = maxB - minB;
+  float scale = 1.0f / glm::compMax(diff); // largest axis -> 1
+
+  const auto small_sdf = [=, pss = APSS(cloud_sampled)](const auto &x) {
+    // Scale query point back to original coordinates
+    glm::vec3 original_p = x / scale + center;
+    return pss.evaluate_surface(original_p, pss_scale);
+  };
+
   polyscope::state::userCallback = [&]() {
+
     ImGui::InputFloat("radius", &radius);
 
     if (ImGui::InputFloat("PSE Scale", &pse_scale)) {
@@ -415,20 +429,8 @@ int main() {
     ImGui::InputFloat("Mean shift neighbours", &mean_shift_search_radius);
     ImGui::Checkbox("PSS use sigmaP", &pss_use_spacing);
 
-    if (ImGui::Button("Show PSS")) {
-
-      if (pss_use_spacing) {
-        auto max = 101;
-        auto resolution = std::floor(max / sigmaP);
-
-        addVolumeGridByResolution("PSS", bounds, original_sdf, resolution);
-      } else {
-        addVolumeGridByResolution("PSS", bounds, original_sdf, gridResolution);
-      }
-    }
-
     if (ImGui::Button("Show subsampling")) {
-      cloud_sampled = subsample(cloud, radius, makePointNormal);
+      cloud_sampled = subsample(cloud, radius * sigmaP, makePointNormal);
       subsampled = drawPointCloud("subsampled", cloud_sampled);
       log_point_cloud_stats(cloud_sampled);
     }
@@ -436,7 +438,7 @@ int main() {
 
     if (ImGui::Button("Resample")) {
       cloud_sampled = resample(
-          cloud_sampled, radius, makePointNormal,
+          cloud_sampled, radius * sigmaP, makePointNormal,
           [apss = APSS(cloud_sampled)](const auto &p) {
             return project_iterative(apss, p, pss_scale);
           },
@@ -446,17 +448,17 @@ int main() {
       log_point_cloud_stats(cloud_sampled);
     }
 
-    ImGui::Combo("PSE shape", &selected_pse, pse_shapes, 2);
+    ImGui::Combo("PSE shape", &selected_pse, pse_shapes, 4);
 
     ImGui::Combo("Morphological operation", &selected_morphology_op,
                  morphology_operations, 2);
 
     using namespace structuring_elements;
-
     const auto se_op = std::array{Operation::Dilation,
                                   Operation::Erosion}[selected_morphology_op];
-    const auto sdf = std::array<std::function<float(const glm::vec3 &)>, 2>{
-        sdf::sphere, sdf::cube}[selected_pse];
+    const auto sdf = std::array<std::function<float(const glm::vec3 &)>, 4>{
+        sdf::sphere, sdf::cube, sdf::torus,
+        [&](const glm::vec3 &p) { return small_sdf(p); }}[selected_pse];
 
     const auto morph = [&] {
       if (se_op == Operation::Dilation) {
@@ -469,20 +471,29 @@ int main() {
     const auto se_project_iterative = [&] {
       if (se_op == Operation::Dilation) {
         return structuring_elements::project_iterative<Dilation>;
+
       } else {
         return structuring_elements::project_iterative<Erosion>;
       }
     }();
-
+    auto original_apss = APSS(cloud_sampled);
     const auto morphological_iterative_projection = [&](const auto &p) {
-      return se_project_iterative(original_apss, p, sdf, pss_scale, pse_scale, 100, 1e-4f);
+      return se_project_iterative(original_apss, p, sdf, pss_scale, pse_scale,
+                                  100, 1e-4f);
     };
 
     if (ImGui::Button("Dense sampling")) {
       const auto denseSampling = morphology::detail::sampleBoxVolume(
           bounds, sigmaP, [&](const auto &sample) {
             auto dist = original_apss.evaluate_surface(sample, pss_scale);
-            return !(dist > pse_scale / 2 && dist < pse_scale);
+
+            if (se_op == Erosion) {
+              dist += pse_scale; // Sample close to dilation surface
+            } else if (se_op == Dilation) {
+              dist -= pse_scale;
+            }
+
+            return std::abs(dist) > 2 * sigmaP;
           });
 
       drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
@@ -501,90 +512,106 @@ int main() {
       return std::min(pse_distance, apss_distance);
     };
 
-    if (ImGui::Button("Morphology preview")) {
+    if (ImGui::Button("Morphology (Variational)")) {
 
-      addVolumeGridByResolution("Variational Morphology", bounds,
+      addVolumeGridByResolution("Morphology (Variational)", bounds,
                                 variational_morphology, gridResolution);
     }
 
-    if (ImGui::Button("Morphology (Dilation/Erosion)")) {
+    if (ImGui::Button("Morphology (Sampled)")) {
 
-      auto morphedPointCloud =
+      const auto morphology_pointcloud =
           morph(original_apss, bounds, sdf, sigmaP, pss_scale, pse_scale);
 
       const auto makePointCentroid = [sigmaC = sigmaC, sdf = sdf,
                                       &pss = original_apss](const auto &p,
-                                                            const auto &) {
+                                                            const auto &n) {
         const auto c = structuring_elements::fit(pss, p, sdf, sigmaC).c;
         return util::concat(p / sigmaP, c / sigmaC);
       };
 
-      auto dilatedSubsampled =
-          subsample(morphedPointCloud, radius, makePointCentroid);
+      auto morphology_subsampled =
+          subsample(morphology_pointcloud, radius * sigmaP, makePointCentroid);
 
-      auto dilatedResampled = resample(
-          dilatedSubsampled, radius, makePointCentroid,
+      auto morphology_resampled = resample(
+          morphology_subsampled, radius * sigmaP, makePointCentroid,
           [&](const auto &p) {
             return se_project_iterative(original_apss, p, sdf, pss_scale,
                                         pse_scale, 100, 1e-4f);
           },
           resampling_iterations);
 
-      // auto dilatedResampled = resample(
-      //     dilatedSubsampled, radius, makePointNormal,
-      //     [&](const auto &p) {
-      //       return se_project_iterative(original_apss, p, sdf, pss_scale,
-      //                                   pse_scale, 100, 1e-4f);
-      //     },
-      //     resampling_iterations);
-
-      const auto dilatedEdges = subsample(
-          edge_sample(dilatedSubsampled, morphological_iterative_projection),
-          radius,
+      const auto morphology_edges = subsample(
+          edge_sample(morphology_subsampled,
+                      morphological_iterative_projection),
+          radius * sigmaP,
           [sigmaP = sigmaP](const PointCloud::Position &p,
                             const PointCloud::Normal &n) -> Feature6D {
             return Feature6D(p.x, p.y, p.z, 0, 0, 0) / sigmaP;
           }); // do not compare normals
 
-      // drawPointCloud("dilated", dilatedPointCloud);
-      // drawPointCloud("dilated subsampled", dilatedSubsampled);
-      auto pc_resampled = drawPointCloud("dilated resampled", dilatedResampled);
+      drawPointCloud("0: Morphology (initial)", morphology_pointcloud)
+          ->setEnabled(false);
+
+      drawPointCloud("1: Morphology (subsampled)", morphology_subsampled)
+          ->setEnabled(false);
+      auto pc_resampled =
+          drawPointCloud("2: Morphology (resampled)", morphology_resampled);
+      pc_resampled->setEnabled(false);
+
+      {
+        // auto morphology_subsampled_2 =
+        //     subsample(morphology_pointcloud, radius * sigmaP,
+        //     makePointNormal);
+        // auto morphology_resampled_2 = resample(
+        //     morphology_subsampled_2, radius, makePointNormal,
+        //     [&](const auto &p) {
+        //       return se_project_iterative(original_apss, p, sdf, pss_scale,
+        //                                   pse_scale, 100, 1e-4f);
+        //     },
+        //     resampling_iterations);
+
+        // drawPointCloud("1.5: Morphology(subsampled 2)",
+        // morphology_subsampled_2)
+        //     ->setEnabled(false);
+
+        // drawPointCloud("2.5: Morphology(resampled 2)",
+        // morphology_resampled_2)
+        //     ->setEnabled(false);
+      }
 
       // Prepare containers
       std::vector<glm::vec3> X, Y, Z;
 
-      for (const auto &p : dilatedResampled.positions) {
+      for (const auto &p : morphology_resampled.positions) {
         auto fit =
             structuring_elements::fit(original_apss, p, sdf, pse_scale, false);
         glm::mat3 J = fit.c_grad.value();
 
-        // Extract Rows: Each represents the gradient of a center component wrt
+        // Extract Rows: Each represents the gradient of a center component
+        // wrt
         // x
-        float Xmag = glm::length(glm::column(J, 0));
-        float Ymag = glm::length(glm::column(J, 1));
-        float Zmag = glm::length(glm::column(J, 2));
 
-        auto max = std::max(std::max(Xmag, Ymag), Zmag);
-
-        X.push_back(glm::column(J, 0) / max);
-        Y.push_back(glm::column(J, 1) / max);
-        Z.push_back(glm::column(J, 2) / max);
+        X.push_back(glm::column(J, 0));
+        Y.push_back(glm::column(J, 1));
+        Z.push_back(glm::column(J, 2));
       }
 
       // Add to Polyscope
       pc_resampled->addVectorQuantity("Jacobian Col 0 (dc / dx)", X);
       pc_resampled->addVectorQuantity("Jacobian Col 1 (dc / dy)", Y);
       pc_resampled->addVectorQuantity("Jacobian Col 2 (dc / dz)", Z);
-      drawPointCloud("dilated edges", dilatedEdges);
+      drawPointCloud("3: Morphology (edges)", morphology_edges)
+          ->setEnabled(false);
 
-      const auto dilatedPointCloudFinal = dilatedResampled & dilatedEdges;
-      drawPointCloud("dilated (final)", dilatedPointCloudFinal);
+      const auto morphology_pc_final = std::move(morphology_resampled);
+      drawPointCloud("4: Morphology (final)", morphology_pc_final);
 
-      const auto dilated_apss = APSS(dilatedPointCloudFinal);
+      const auto morphology_apss = APSS(morphology_pc_final);
       addVolumeGridByResolution(
-          "Dilated", bounds,
-          [&dilated_apss, &pss_scale = pss_scale](const auto &p) {
-            return dilated_apss.evaluate_surface(p, pss_scale);
+          "Morphology (PSS)", bounds,
+          [&morphology_apss, &pss_scale = pss_scale](const auto &p) {
+            return morphology_apss.evaluate_surface(p, pss_scale);
           },
           gridResolution);
     }
@@ -592,7 +619,7 @@ int main() {
     if (ImGui::Button("Feature detection")) {
       const auto edge_sampling = subsample(
           edge_sample(cloud_sampled, morphological_iterative_projection),
-          radius, makePointNormal);
+          radius * sigmaP, makePointNormal);
 
       drawPointCloud("Edge sampling", edge_sampling);
     }
@@ -794,6 +821,47 @@ int main() {
           p, n, true);
     }
 
+    if (ImGui::Button("Show PSE")) {
+
+      auto PSE_bounds = ::detail::Bounds(p - glm::vec3(1, 1, 1) * pse_scale,
+                                         p + glm::vec3(1, 1, 1) * pse_scale);
+      addVolumeGridByResolution(
+          "PSE", PSE_bounds,
+          [&](const auto &x) {
+            return structuring_elements::PointStructuringElement{pse_scale, p,
+                                                                 sdf}
+                .distance(x);
+          },
+          gridResolution);
+    }
+
+    if (ImGui::Button("Show PSS")) {
+
+      const auto pss_sdf = [pss = APSS(fetched_point_cloud),
+                            &pss_scale = pss_scale](const auto &p) {
+        return pss.evaluate_surface(p, pss_scale);
+      };
+
+      if (pss_use_spacing) {
+        auto max = 101;
+        auto resolution = std::floor(max / sigmaP);
+
+        addVolumeGridByResolution("PSS", bounds, pss_sdf, resolution);
+      } else {
+        addVolumeGridByResolution("PSS", bounds, pss_sdf, gridResolution);
+      }
+    }
+
+    if (ImGui::Button("Show centroids")) {
+
+      std::vector<glm::vec3> centroids;
+      for (const auto &p : fetched_point_cloud.positions) {
+        centroids.emplace_back(
+            structuring_elements::fit(original_apss, p, sdf, sigmaC).c);
+      }
+      drawPointCloud("centroids", centroids);
+    }
+
     if (ImGui::Button("Mean shift")) {
       // We aim to minimize (9)
 
@@ -832,7 +900,7 @@ int main() {
         distances.emplace_back(distances_and_points.back().first);
       }
 
-      npc->addScalarQuantity("distances", distances);
+      npc->addScalarQuantity("distances", distances)->setEnabled(true);
 
       // we are looking at the 2 most meaningful points
       auto nth = 2;
@@ -852,8 +920,7 @@ int main() {
       drawPointCloud("candidates", cjs, polyscope::PointRenderMode::Quad);
 
       const auto [converged_candidates, converged_grads] =
-          structuring_elements::mean_shift(p, cjs, neighbours, sdf, 0,
-                                           pse_scale, false);
+          structuring_elements::mean_shift(p, cjs, neighbours, sdf, pse_scale);
 
       auto distances_converged = std::vector<float>{};
       std::vector<glm::vec3> gradX, gradY, gradZ;
@@ -875,7 +942,7 @@ int main() {
           drawPointCloud("converged candidates", {converged_candidates[0]},
                          polyscope::PointRenderMode::Sphere);
       convpc->addScalarQuantity("distance", distances_converged)
-          ->setEnabled(true);
+          ->setEnabled(false);
       convpc->addVectorQuantity("gradX", gradX);
       convpc->addVectorQuantity("gradY", gradY);
       convpc->addVectorQuantity("gradZ", gradZ);
@@ -902,6 +969,8 @@ int main() {
                           util::gradient(p, variational_morphology, sigmaP))});
     }
   };
+
+  polyscope::screenshot();
 
   polyscope::show();
 }

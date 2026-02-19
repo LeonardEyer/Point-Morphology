@@ -2,7 +2,7 @@
 
 #include "APSS.hpp"
 #include "PointCloud.hpp"
-#include "glm/ext/matrix_transform.hpp"
+#include "Utils.hpp"
 
 #include <cassert>
 #include <functional>
@@ -19,7 +19,8 @@ namespace sdf {
 const auto sphere = [](const glm::vec3 &p) { return glm::length(p) - 1.0f; };
 
 const auto torus = [](const glm::vec3 &p) {
-  static const auto t = glm::vec2(1.0, 0.3);
+  static const auto t =
+      glm::vec2(0.3846, 0.1154); // scaled for 1x1x1 bounding volume
   glm::vec2 q = glm::vec2(glm::length(glm::vec2(p.x, p.z)) - t.x, p.y);
   return glm::length(q) - t.y;
 };
@@ -69,18 +70,22 @@ struct PointStructuringElement {
     float dy = (distance(x + ey) - distance(x - ey)) / (2.0f * eps);
     float dz = (distance(x + ez) - distance(x - ez)) / (2.0f * eps);
 
-    return Position(dx, dy, dz);
+    return glm::normalize(Position(dx, dy, dz));
   }
 };
 
 inline auto mean_shift(const glm::vec3 &x,
                        const std::vector<glm::vec3> &candidates,
                        const std::vector<glm::vec3> &neighbours,
-                       const PointStructuringElement::SDF &sdf, float offset,
-                       float scale, bool verbose = false) {
+                       const PointStructuringElement::SDF &sdf,
+                       float pse_scale) {
   static constexpr auto sqEps = 1e-4 * 1e-4;
   static constexpr auto maxIter = 20u;
-  static const auto initial_grad = glm::mat3(1.0f);
+  static constexpr auto initial_grad = glm::mat3(1.0f);
+
+  // ensure that the largest possible point in search radius is close to zero
+  // weighting (3 stddev of gaussian)
+  const auto scale = pse_scale / 3.f;
 
   const auto weightFunc = [scaleSq = scale * scale](const auto &x) -> float {
     return std::exp(-x / (2.0f * scaleSq));
@@ -104,8 +109,8 @@ inline auto mean_shift(const glm::vec3 &x,
 
       for (const auto &p_i : neighbours) {
 
-        const auto B = PointStructuringElement{scale, p_i, sdf};
-        const auto B_p = B.distance(x);
+        const auto B = PointStructuringElement{pse_scale, p_i, sdf};
+        const auto B_p = B.distance(x) + pse_scale;
         const auto B_p_grad = B.gradient(x);
 
         // w_i^{k-1} (A9)
@@ -134,6 +139,14 @@ inline auto mean_shift(const glm::vec3 &x,
       c_j = c_j_k;
       c_j_grad = c_j_k_grad;
 
+      // Frobenius Normalization
+      float norm = glm::length(glm::vec3(glm::length(c_j_grad[0]),
+                                         glm::length(c_j_grad[1]),
+                                         glm::length(c_j_grad[2])));
+      if (norm > 1e-9f) {
+        c_j_grad /= norm;
+      }
+
       iter++;
     }
   }
@@ -146,14 +159,13 @@ inline PointStructuringElement fit(const APSS &pss,
                                    float scale, bool verbose = false) {
 
   // We aim to minimize (9)
-
+  auto searchRadius = scale;
   // 1. collect a point sampling PI of the implicit surface
   const auto neighbours = [&]() {
     std::vector<PointCloud::Position> neighbours;
     auto result = pss.pointCloud.tree->neighboursInRadius(x, scale);
 
-    auto searchRadius = scale;
-    while (result.empty()) {
+    while (result.size() < 10) {
       searchRadius *= 1.1;
       result = pss.pointCloud.tree->neighboursInRadius(x, searchRadius);
     }
@@ -187,33 +199,27 @@ inline PointStructuringElement fit(const APSS &pss,
     return cjs;
   }();
 
-  // const auto sdf_min = 1.0f;
-  // const auto [converged_candidates, converged_grads] =
-  //     mean_shift(x, cj0, neighbours, sdf, sdf_min, scale, verbose);
+  const auto [converged_candidates, converged_grads] =
+      mean_shift(x, cj0, neighbours, sdf, searchRadius);
 
-  // // Choose Global Minimizer (Eq 11)
-  // auto best_energy = std::numeric_limits<float>::max();
-  // PointCloud::Position global_c = converged_candidates[0];
-  // PointStructuringElement::Jacobian global_c_grad = converged_grads[0];
+  // Choose Global Minimizer (Eq 11)
+  auto best_energy = std::numeric_limits<float>::max();
+  PointCloud::Position global_c = converged_candidates[0];
+  PointStructuringElement::Jacobian global_c_grad = converged_grads[0];
 
-  // for (auto i = 0u; i < converged_candidates.size(); i++) {
-  //   auto &cand_c = converged_candidates[i];
-  //   auto &cand_c_grad = converged_grads[i];
-  //   // Evaluate the PSE distance (B_c(x)) for this candidate
-  //   auto pse = PointStructuringElement{scale, cand_c, sdf};
-  //   float energy = std::abs(pse.distance(x));
+  for (auto i = 0u; i < converged_candidates.size(); i++) {
+    auto &cand_c = converged_candidates[i];
+    auto &cand_c_grad = converged_grads[i];
+    // Evaluate the PSE distance (B_c(x)) for this candidate
+    auto pse = PointStructuringElement{scale, cand_c, sdf};
+    float energy = std::abs(pse.distance(x));
 
-  //   if (energy < best_energy) {
-  //     best_energy = energy;
-  //     global_c = cand_c;
-  //     global_c_grad = cand_c_grad;
-  //   }
-  // }
-
-  auto global_c = cj0[0];
-  auto global_c_grad = glm::mat3(1);
-
-  // const auto [projected_c, _] = project_iterative(pss, global_c, scale);
+    if (energy < best_energy) {
+      best_energy = energy;
+      global_c = cand_c;
+      global_c_grad = cand_c_grad;
+    }
+  }
 
   return PointStructuringElement{scale, global_c, sdf, global_c_grad};
 }
@@ -235,15 +241,18 @@ inline PointCloud::Position
 shift<Operation::Dilation>(const PointStructuringElement &pse,
                            const PointCloud::Position &p, bool inside) {
 
+  static constexpr auto eps = 1e-4f;
+
   // Only shift if we are inside
   if (!inside) {
     return p;
   }
 
-  auto distance = pse.c - p;
-  auto e_m = pse.s * 1.1f;
+  const auto distance = pse.c - p;
+  const auto e_m =
+      (1.f + pse.s) + eps; // Move to center (1) + to bounding sphere (s)
 
-  auto delta = e_m * glm::normalize(distance);
+  const auto delta = e_m * glm::normalize(distance);
 
   return p + delta;
 }
@@ -253,15 +262,18 @@ inline PointCloud::Position
 shift<Operation::Erosion>(const PointStructuringElement &pse,
                           const PointCloud::Position &p, bool inside) {
 
+  static constexpr auto eps = 1e-4f;
+
   // Only shift if we are outside
   if (inside) {
     return p;
   }
 
-  auto distance = pse.c - p;
-  auto e_m = pse.s * 1.1f;
+  const auto distance = pse.c - p;
+  const auto e_m =
+      (1.f + pse.s) + eps; // Move to center (1) + to bounding sphere (s)
 
-  auto delta = e_m * glm::normalize(distance);
+  const auto delta = e_m * glm::normalize(distance);
 
   return p + delta;
 }
@@ -280,8 +292,7 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
     // TODO: Speed up indicator function computation
     // remark: we add a bufer zone of the pse_scale to make sure that we are not
     // "inside" the PSE
-    auto inside =
-        pss.evaluate_surface(p, pss_scale) <= threshold; // (pse_scale / 2);
+    auto inside = pss.evaluate_surface(p, pss_scale) <= (pse_scale / 2);
 
     // shift then project
     return project(fitted, shift<op>(fitted, p, inside));
@@ -292,7 +303,7 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
 
   for (auto i = 0; i < maxIter; i++) {
 
-    if (glm::distance(xi, xip1) < threshold * threshold) {
+    if (glm::distance2(xi, xip1) <= threshold * threshold) {
       // converged
       break;
     }
@@ -301,33 +312,45 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
     xip1 = P(xip1);
   }
 
-  // auto fitted = fit(pss, xip1, sdf, pse_scale);
-  // auto grad_B = fitted.gradient(xip1);
+  const auto fitted = fit(pss, xip1, sdf, pse_scale);
+  const auto J_c = fitted.c_grad;
 
-  // // Erosion means flipping the pse normal
-  // if constexpr (op == Erosion) {
-  //   grad_B *= -1;
-  // }
+  auto normal = glm::vec3();
 
-  // auto J_c = fitted.c_grad.value();
-  // static constexpr glm::mat3 Identity(1.0f);
+  if (J_c.has_value()) {
 
-  // // This term ensures that even if grad_B is [1,0,0],
-  // // it is transformed by the relationship between the point and the fit.
-  // auto normal = glm::normalize(grad_B * (Identity - J_c));
+    auto grad_B = fitted.gradient(xip1);
 
-  const auto variational_morphology = [&](const auto &p) {
-    const auto pse_distance =
-        structuring_elements::fit(pss, p, sdf, pse_scale).distance(p);
-    const auto apss_distance = pss.evaluate_surface(p, pss_scale);
-    if (op == structuring_elements::Erosion) {
-      return std::max(-pse_distance, apss_distance);
+    // Erosion means flipping the pse normal
+    if constexpr (op == Erosion) {
+      grad_B *= -1;
     }
-    return std::min(pse_distance, apss_distance);
-  };
+    static constexpr glm::mat3 Identity(1.0f);
 
-  auto normal = glm::normalize(util::gradient(x, variational_morphology, 1));
+    // This term ensures that even if grad_B is [1,0,0],
+    // it is transformed by the relationship between the point and the fit.
+    normal = glm::normalize(grad_B * (Identity - *J_c));
 
+  } else {
+    std::cout << "woops" << std::endl;
+    // const auto variational_morphology = [&](const auto &p) {
+    //   const auto pse_distance =
+    //       structuring_elements::fit(pss, p, sdf, pse_scale).distance(p);
+    //   const auto apss_distance = pss.evaluate_surface(p, pss_scale);
+    //   if (op == structuring_elements::Erosion) {
+    //     return std::max(-pse_distance, apss_distance);
+    //   }
+    //   return std::min(pse_distance, apss_distance);
+    // };
+    // auto normal = glm::normalize(util::gradient(x, variational_morphology,
+    // 1));
+    normal = glm::normalize(util::gradient(
+        x, [&](const auto &x) { return fitted.distance(x); }, 0.75));
+
+    if constexpr (op == Erosion) {
+      normal *= -1;
+    }
+  }
   return {xip1, normal};
 }
 
