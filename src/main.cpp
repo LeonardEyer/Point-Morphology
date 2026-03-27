@@ -8,6 +8,7 @@
 #include "Resample.hpp"
 #include "Subsample.hpp"
 #include "Utils.hpp"
+#include "polyscope/options.h"
 #include "polyscope/screenshot.h"
 
 #include <atomic>
@@ -208,6 +209,7 @@ int resampling_iterations = 10;
 float mean_shift_search_radius = pse_scale;
 
 bool pss_use_spacing = false;
+bool sampling_compute_pointnormal_embedding = false;
 
 static const char *pse_shapes[]{"Sphere", "Cube", "Torus", "Pointcloud"};
 int selected_pse = 0;
@@ -366,6 +368,10 @@ void iterative_projection_debug_view(const auto &pos, auto &projection,
 int main() {
   polyscope::init();
 
+  //polyscope::view::setUpDir(polyscope::UpDir::ZUp);
+  //polyscope::view::setFrontDir(polyscope::FrontDir::NegYFront);
+  polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
+
   auto plane1 = polyscope::addSceneSlicePlane(true);
   plane1->setDrawWidget(false);
   plane1->setDrawPlane(false);
@@ -381,7 +387,8 @@ int main() {
   // auto cloud = readNOFF("./resources/4: Morphology (final).txt");
   // auto cloud = readNOFF("./resources/cone.txt");
   // auto cloud = readNOFF("./resources/cube.txt");
-  auto cloud = fromPLY("./resources/hand2.ply");
+  auto cloud = readNOFF("./resources/thin-sheet.txt");
+  //auto cloud = fromPLY("./resources/hand2.ply");
   // auto cloud = fromPLY("./resources/bunny.ply");
   {
     // Rescale to have bounding box of 100
@@ -413,7 +420,6 @@ int main() {
   };
 
   polyscope::state::userCallback = [&]() {
-
     ImGui::InputFloat("radius", &radius);
 
     if (ImGui::InputFloat("PSE Scale", &pse_scale)) {
@@ -428,6 +434,8 @@ int main() {
     ImGui::InputInt("Grid resolution", &gridResolution);
     ImGui::InputFloat("Mean shift neighbours", &mean_shift_search_radius);
     ImGui::Checkbox("PSS use sigmaP", &pss_use_spacing);
+    ImGui::Checkbox("Compute sampling using point and normal embedding",
+                    &sampling_compute_pointnormal_embedding);
 
     if (ImGui::Button("Show subsampling")) {
       cloud_sampled = subsample(cloud, radius * sigmaP, makePointNormal);
@@ -457,7 +465,7 @@ int main() {
     const auto se_op = std::array{Operation::Dilation,
                                   Operation::Erosion}[selected_morphology_op];
     const auto sdf = std::array<std::function<float(const glm::vec3 &)>, 4>{
-        sdf::sphere, sdf::cube, sdf::torus,
+        sdf::sphere, sdf::roundcube, sdf::torus,
         [&](const glm::vec3 &p) { return small_sdf(p); }}[selected_pse];
 
     const auto morph = [&] {
@@ -499,17 +507,29 @@ int main() {
       drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
     }
 
-    const auto variational_morphology = [&](const auto &p) {
+    const auto variational_dilation = [&](const auto &p) {
       const auto pse_distance =
           structuring_elements::fit(original_apss, p, sdf, pse_scale)
               .distance(p);
       const auto apss_distance = original_apss.evaluate_surface(p, pss_scale);
 
-      if (se_op == structuring_elements::Erosion) {
-        return std::max(-pse_distance, apss_distance);
-      }
-
       return std::min(pse_distance, apss_distance);
+    };
+
+    const auto variational_erosion = [&](const auto &p) {
+      const auto pse_distance =
+          structuring_elements::fit(original_apss, p, sdf, pse_scale)
+              .distance(p);
+      const auto apss_distance = original_apss.evaluate_surface(p, pss_scale);
+
+      return std::max(-pse_distance, apss_distance);
+    };
+
+    const auto variational_morphology = [&](const auto &p) {
+      if (se_op == structuring_elements::Erosion) {
+        return variational_erosion(p);
+      }
+      return variational_dilation(p);
     };
 
     if (ImGui::Button("Morphology (Variational)")) {
@@ -559,25 +579,22 @@ int main() {
           drawPointCloud("2: Morphology (resampled)", morphology_resampled);
       pc_resampled->setEnabled(false);
 
-      {
-        // auto morphology_subsampled_2 =
-        //     subsample(morphology_pointcloud, radius * sigmaP,
-        //     makePointNormal);
-        // auto morphology_resampled_2 = resample(
-        //     morphology_subsampled_2, radius, makePointNormal,
-        //     [&](const auto &p) {
-        //       return se_project_iterative(original_apss, p, sdf, pss_scale,
-        //                                   pse_scale, 100, 1e-4f);
-        //     },
-        //     resampling_iterations);
+      if (sampling_compute_pointnormal_embedding) {
+        auto morphology_subsampled_2 =
+            subsample(morphology_pointcloud, radius * sigmaP, makePointNormal);
+        auto morphology_resampled_2 = resample(
+            morphology_subsampled_2, radius * sigmaP, makePointNormal,
+            [&](const auto &p) {
+              return se_project_iterative(original_apss, p, sdf, pss_scale,
+                                          pse_scale, 100, 1e-4f);
+            },
+            resampling_iterations);
 
-        // drawPointCloud("1.5: Morphology(subsampled 2)",
-        // morphology_subsampled_2)
-        //     ->setEnabled(false);
+        drawPointCloud("1.5: Morphology(subsampled 2)", morphology_subsampled_2)
+            ->setEnabled(false);
 
-        // drawPointCloud("2.5: Morphology(resampled 2)",
-        // morphology_resampled_2)
-        //     ->setEnabled(false);
+        drawPointCloud("2.5: Morphology(resampled 2)", morphology_resampled_2)
+            ->setEnabled(false);
       }
 
       // Prepare containers

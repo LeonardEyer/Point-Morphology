@@ -35,6 +35,14 @@ const auto cube = [](const glm::vec3 &p) {
   return outsideDist + insideDist;
 };
 
+const auto roundcube = [](const glm::vec3 &p) {
+  static const auto b = glm::vec3(1.f / sqrt(3));
+  static const auto r = .1f;
+  const auto q = glm::abs(p) - b + r;
+  return glm::length(glm::max(q, glm::vec3(0.0f))) +
+         std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f) - r;
+};
+  
 } // namespace sdf
 
 struct PointStructuringElement {
