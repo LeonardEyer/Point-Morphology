@@ -35,11 +35,16 @@ resample(const PointCloud &cloud, double radius, const Embedding &embedding,
   std::mt19937 rng(1337);
 
   auto mem = PreallocatedMemory(256);
-  for (auto iter = 0; iter < iterations; ++iter) {
 
-    // Create a list of indices 0 .. nPoints-1
-    std::vector<size_t> indices(nPoints);
-    std::iota(indices.begin(), indices.end(), 0);
+ 
+  std::vector<size_t> indices(nPoints);
+  std::iota(indices.begin(), indices.end(), 0);
+ 
+ 
+  std::vector<util::Feature6D> neighbourFeatures;
+  neighbourFeatures.reserve(64);
+  
+  for (auto iter = 0; iter < iterations; ++iter) {
 
     // Shuffle them so each index is used exactly once in random order
     std::shuffle(indices.begin(), indices.end(), rng);
@@ -52,10 +57,10 @@ resample(const PointCloud &cloud, double radius, const Embedding &embedding,
                          static_cast<float>(iterations * nPoints)
                   << "%" << std::endl;
       }
+      
+      // choose a random position
       size_t randIndex = indices[i];
       const auto &p = resampled_positions[randIndex];
-
-      // choose a random index
       auto neighbours = resampled.inRadius(p, radius, true);
 
       if (neighbours.empty()) {
@@ -63,8 +68,7 @@ resample(const PointCloud &cloud, double radius, const Embedding &embedding,
       }
 
       const auto x = embeddings[randIndex];
-
-      std::vector<util::Feature6D> neighbourFeatures;
+      neighbourFeatures.clear();
       for (auto idx : neighbours) {
         neighbourFeatures.push_back(embeddings[idx]);
       }

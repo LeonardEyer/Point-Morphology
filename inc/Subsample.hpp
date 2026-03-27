@@ -15,10 +15,15 @@ inline PointCloud subsample(const PointCloud &cloud, double radius,
 
   auto sampled_positions = std::vector<PointCloud::Position>{};
   auto sampled_normals = std::vector<PointCloud::Normal>{};
-  auto sampled = ssg::SSG<util::SSGAdaptor>(sampled_positions, 2*radius);
+  auto sampled = ssg::SSG<util::SSGAdaptor>(sampled_positions, 2 * radius);
+
+  auto sampled_embeddings = std::vector<util::Feature6D>{};
 
   // Avoid reallocating a bunch of memory
   auto mem = PreallocatedMemory(256);
+
+  std::vector<util::Feature6D> neighborFeatures;
+  neighborFeatures.reserve(64);
 
   std::mt19937 rng(1337);
   std::vector<size_t> indices(cloud.positions.size());
@@ -31,24 +36,24 @@ inline PointCloud subsample(const PointCloud &cloud, double radius,
     glm::vec3 p = cloud.positions[randIndex];
     glm::vec3 n = cloud.normals[randIndex];
     auto x = embedding(p, n);
-    
+
     // we get sorted neighbours
     auto neighbors = sampled.inRadius(p, radius, true);
 
     double s = 1.0;
     if (!neighbors.empty()) {
 
-      std::vector<Feature6D> neighborPointNormals;
-      for (auto idx : neighbors) {
-        neighborPointNormals.push_back(
-				       embedding(sampled_positions[idx], sampled_normals[idx]));
+      neighborFeatures.clear();
+      for (const auto idx : neighbors) {
+        neighborFeatures.push_back(sampled_embeddings[idx]);
       }
 
-      s = takeInverseIterative(x, neighborPointNormals, mem, rbfKernel, eps).s;
+      s = takeInverseIterative(x, neighborFeatures, mem, rbfKernel, eps).s;
     }
     if (s > eps) {
       sampled.insert(p);
       sampled_normals.push_back(n);
+      sampled_embeddings.push_back(x);
     }
   }
 
