@@ -116,7 +116,7 @@ auto morph(const APSS &original_apss, const ::detail::Bounds &bounds,
         return std::abs(dist) > 2 * sigmaP;
       });
 
-  drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
+  draw::drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
   std::cout << "Dense sampling count = " << denseSampling.size() << std::endl;
 
   auto morphed_points = denseSampling;

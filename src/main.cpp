@@ -8,13 +8,8 @@
 #include "Resample.hpp"
 #include "Subsample.hpp"
 #include "Utils.hpp"
-#include "polyscope/options.h"
-#include "polyscope/screenshot.h"
-#include "polyscope/view.h"
 
-#include <atomic>
 #include <cassert>
-#include <cinttypes>
 #include <cmath>
 #include <functional>
 #include <glm/ext/matrix_transform.hpp>
@@ -26,16 +21,19 @@
 #include <nanoflann.hpp>
 #include <polyscope/affine_remapper.h>
 #include <polyscope/implicit_helpers.h>
+#include <polyscope/options.h>
 #include <polyscope/pick.h>
 #include <polyscope/point_cloud.h>
 #include <polyscope/point_cloud_vector_quantity.h>
 #include <polyscope/polyscope.h>
+#include <polyscope/screenshot.h>
 #include <polyscope/slice_plane.h>
 #include <polyscope/types.h>
 #include <polyscope/utilities.h>
+#include <polyscope/view.h>
 #include <polyscope/volume_grid.h>
 #include <stdexcept>
-#include <thread>
+
 #include <utility>
 #include <vector>
 
@@ -51,92 +49,6 @@ inline std::ostream &operator<<(std::ostream &os, const glm::mat3 &m) {
   }
   os << "]";
   return os;
-}
-
-namespace detail {
-
-template <typename SDFFunc>
-void computeVolumeGrid(const glm::vec3 &minBound, const glm::vec3 &maxBound,
-                       uint32_t dimX, uint32_t dimY, uint32_t dimZ,
-                       float spacingX, float spacingY, float spacingZ,
-                       const SDFFunc &sdf, std::vector<float> &values,
-                       std::atomic<size_t> &voxelsDone) {
-
-  unsigned numThreads = std::thread::hardware_concurrency();
-  std::vector<std::thread> threads;
-
-  auto worker = [&](size_t zStart, size_t zEnd) {
-    for (size_t iz = zStart; iz < zEnd; ++iz) {
-      for (size_t iy = 0; iy < dimY; ++iy) {
-        for (size_t ix = 0; ix < dimX; ++ix) {
-          size_t idx = iz * dimY * dimX + iy * dimX + ix;
-
-          glm::vec3 p(minBound.x + ix * spacingX, minBound.y + iy * spacingY,
-                      minBound.z + iz * spacingZ);
-
-          p.x = std::min(p.x, maxBound.x);
-          p.y = std::min(p.y, maxBound.y);
-          p.z = std::min(p.z, maxBound.z);
-
-          values[idx] = sdf(p);
-          voxelsDone.fetch_add(1, std::memory_order_relaxed);
-        }
-      }
-    }
-  };
-
-  size_t chunk = dimZ / numThreads;
-  size_t zStart = 0;
-  for (unsigned t = 0; t < numThreads; ++t) {
-    size_t zEnd = (t == numThreads - 1) ? dimZ : zStart + chunk;
-    threads.emplace_back(worker, zStart, zEnd);
-    zStart = zEnd;
-  }
-
-  size_t totalVoxels = dimX * dimY * dimZ;
-  while (voxelsDone < totalVoxels) {
-    std::cout << "\rComputing Grid Volume Voxels (Progress): "
-              << (100.0 * voxelsDone / totalVoxels) << "%   " << std::flush;
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  }
-
-  for (auto &t : threads)
-    t.join();
-  std::cout << "\rComputing Grid Volume Voxels (Progress): 100%   \n";
-  voxelsDone = 0;
-}
-
-} // namespace detail
-
-template <typename SDFFunc>
-void addVolumeGridByResolution(const std::string &name,
-                               const detail::Bounds &bounds, const SDFFunc &sdf,
-                               const size_t resolution = 50) {
-
-  auto &[minBound, maxBound] = bounds;
-
-  uint32_t dimX = resolution;
-  uint32_t dimY = resolution;
-  uint32_t dimZ = resolution;
-
-  float spacingX = (maxBound.x - minBound.x) / (dimX - 1);
-  float spacingY = (maxBound.y - minBound.y) / (dimY - 1);
-  float spacingZ = (maxBound.z - minBound.z) / (dimZ - 1);
-
-  std::vector<float> values(dimX * dimY * dimZ);
-  static std::atomic<size_t> voxelsDone{0};
-
-  detail::computeVolumeGrid(minBound, maxBound, dimX, dimY, dimZ, spacingX,
-                            spacingY, spacingZ, sdf, values, voxelsDone);
-
-  auto *psGrid = polyscope::registerVolumeGrid(name, {dimX, dimY, dimZ},
-                                               minBound, maxBound);
-  psGrid->setEdgeWidth(0);
-  auto *qNode = psGrid->addNodeScalarQuantity("sdf node", values);
-  qNode->setEnabled(true);
-  qNode->setIsosurfaceLevel(0.0);
-  qNode->setIsosurfaceVizEnabled(true);
-  qNode->setGridcubeVizEnabled(false);
 }
 
 void writeNOFF(std::string out, const PointCloud &cloud) {
@@ -280,8 +192,8 @@ void importance_debug_view(const auto &cloud_sampled, const auto &embedding,
   auto s = kernelResult.s;
 
   {
-    auto nCloud = drawPointCloud("neighbours", neighbours_points,
-                                 polyscope::PointRenderMode::Sphere);
+    auto nCloud = draw::drawPointCloud("neighbours", neighbours_points,
+                                       polyscope::PointRenderMode::Sphere);
 
     auto quant = nCloud->addVectorQuantity("normals", neighbours_normals);
 
@@ -294,8 +206,9 @@ void importance_debug_view(const auto &cloud_sampled, const auto &embedding,
 
     if (showEmbedding) {
 
-      auto embeddingCloud = drawPointCloud("embedding", neighbours_embed_tail,
-                                           polyscope::PointRenderMode::Sphere);
+      auto embeddingCloud =
+          draw::drawPointCloud("embedding", neighbours_embed_tail,
+                               polyscope::PointRenderMode::Sphere);
 
       std::vector<glm::vec3> neighbours_connections;
 
@@ -315,8 +228,8 @@ void importance_debug_view(const auto &cloud_sampled, const auto &embedding,
   auto s_grad_p = util::to_glm(s_grad.head(3));
 
   {
-    auto pCloud = drawPointCloud("point", std::vector{p},
-                                 polyscope::PointRenderMode::Sphere);
+    auto pCloud = draw::drawPointCloud("point", std::vector{p},
+                                       polyscope::PointRenderMode::Sphere);
     auto quant = pCloud->addVectorQuantity("s grad", std::vector{s_grad_p});
     quant->setVectorLengthScale(glm::length(s_grad_p), false);
     quant->setEnabled(true);
@@ -327,9 +240,9 @@ void importance_debug_view(const auto &cloud_sampled, const auto &embedding,
 
     auto [pp1, nn1] = project(start);
 
-    auto pCloud =
-        drawPointCloud("update", std::vector{start, pp1}, std::vector{n, nn1},
-                       polyscope::PointRenderMode::Sphere);
+    auto pCloud = draw::drawPointCloud("update", std::vector{start, pp1},
+                                       std::vector{n, nn1},
+                                       polyscope::PointRenderMode::Sphere);
   }
 }
 
@@ -358,9 +271,9 @@ void iterative_projection_debug_view(const auto &pos, auto &projection,
     distances.push_back(dist);
   }
 
-  auto pc =
-      drawPointCloud("iterative projection", PointCloud(positions, normals),
-                     polyscope::PointRenderMode::Sphere);
+  auto pc = draw::drawPointCloud("iterative projection",
+                                 PointCloud(positions, normals),
+                                 polyscope::PointRenderMode::Sphere);
 
   pc->addVectorQuantity("path", path, polyscope::VectorType::AMBIENT);
   pc->addVectorQuantity("gradient", gradients);
@@ -368,41 +281,56 @@ void iterative_projection_debug_view(const auto &pos, auto &projection,
 }
 
 int main(int argc, char **argv) {
+
+  if (argc < 3) {
+    std::cout << "Usage: point-morphology -noff <path> OR -ply <path>"
+              << std::endl;
+    return 1;
+  }
   polyscope::init();
-  polyscope::view::setWindowSize(1024, 1024);
 
-  polyscope::CameraParameters params(
-      polyscope::CameraIntrinsics::fromFoVDegVerticalAndAspect(45, 1.),
-      polyscope::CameraExtrinsics::fromVectors(
-          glm::vec3{2., 2., 2.},  // world-space position
-          glm::vec3{-1., 0., 0.}, // world-space look direction
-          glm::vec3{0., 1., 0.}   // world-space up direction
-          ));
+  std::string flag = argv[1];
+  std::string path = argv[2];
+  PointCloud cloud; // Assuming your point cloud object type
 
-  // set the viewport view to those parameters
-  polyscope::view::setViewToCamera(params);
-  polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
+  if (flag == "-noff") {
+    cloud = readNOFF(path);
+  } else if (flag == "-ply") {
+    cloud = fromPLY(path);
+  } else {
+    std::cerr << "Unknown flag: " << flag << std::endl;
+    return 1;
+  }
 
-  auto plane1 = polyscope::addSceneSlicePlane(true);
-  plane1->setDrawWidget(false);
-  plane1->setDrawPlane(false);
-  plane1->setActive(false);
+  {
+    polyscope::view::setWindowSize(1024, 1024);
+    std::string json =
+        R"({"farClipRatio":20.0,"fov":45.0,"nearClipRatio":0.005,"projectionMode":"Perspective","viewMat":[0.826793074607849,2.56113708019257e-09,0.562506377696991,0.0,-0.114914402365685,0.978909909725189,0.168905660510063,0.0,-0.550643444061279,-0.204290300607681,0.809355676174164,-121.243576049805,0.0,0.0,0.0,1.0],"windowHeight":1018,"windowWidth":1024})";
 
-  auto plane2 = polyscope::addSceneSlicePlane(true);
-  plane2->setDrawWidget(false);
-  plane2->setDrawPlane(false);
-  plane2->setTransform(
-      glm::rotate(glm::mat4(1.0f), glm::radians(90.f), glm ::vec3(0, 1, 0)));
-  plane2->setActive(false);
+    polyscope::view::setCameraFromJson(json, false);
+    polyscope::options::groundPlaneMode =
+        polyscope::GroundPlaneMode::ShadowOnly;
 
-  // auto cloud = readNOFF("./resources/4: Morphology (final).txt");
+    auto plane1 = polyscope::addSceneSlicePlane(true);
+    plane1->setDrawWidget(false);
+    plane1->setDrawPlane(false);
+    plane1->setActive(false);
+
+    auto plane2 = polyscope::addSceneSlicePlane(true);
+    plane2->setDrawWidget(false);
+    plane2->setDrawPlane(false);
+    plane2->setTransform(
+        glm::rotate(glm::mat4(1.0f), glm::radians(90.f), glm ::vec3(0, 1, 0)));
+    plane2->setActive(false);
+  }
+
   // auto cloud = readNOFF("./resources/cone.txt");
   // auto cloud = readNOFF("./resources/cube.txt");
-  // auto cloud = readNOFF("./resources/thin-sheet.txt");
-  // auto cloud = fromPLY("./resources/hand2.ply");
-  // auto cloud = fromPLY("./resources/cap.ply");
-  auto cloud = fromPLY("./resources/armadillo.ply");
-  //  auto cloud = fromPLY("./resources/bunny.ply");
+  //  auto cloud = readNOFF("./resources/thin-sheet.txt");
+  //  auto cloud = fromPLY("./resources/hand2.ply");
+  //  auto cloud = fromPLY("./resources/cap.ply");
+  // auto cloud = fromPLY("./resources/armadillo.ply");
+  //   auto cloud = fromPLY("./resources/bunny.ply");
   {
     // Rescale to have bounding box of 100
     auto bounds = detail::computeBoundingBox(cloud.positions, 0);
@@ -412,7 +340,7 @@ int main(int argc, char **argv) {
 
   auto cloud_sampled =
       std::move(cloud); // subsample(cloud, radius, makePointNormal);
-  auto subsampled = drawPointCloud("subsampled", cloud_sampled);
+  auto subsampled = draw::drawPointCloud("subsampled", cloud_sampled);
 
   auto bounds =
       detail::computeBoundingBox(cloud_sampled.positions, pse_scale * 1.5);
@@ -452,7 +380,7 @@ int main(int argc, char **argv) {
 
     if (ImGui::Button("Show subsampling")) {
       cloud_sampled = subsample(cloud, radius * sigmaP, makePointNormal);
-      subsampled = drawPointCloud("subsampled", cloud_sampled);
+      subsampled = draw::drawPointCloud("subsampled", cloud_sampled);
       log_point_cloud_stats(cloud_sampled);
     }
     ImGui::InputInt("Resampling iterations", &resampling_iterations);
@@ -465,7 +393,7 @@ int main(int argc, char **argv) {
           },
           resampling_iterations);
 
-      subsampled = drawPointCloud("subsampled", cloud_sampled);
+      subsampled = draw::drawPointCloud("subsampled", cloud_sampled);
       log_point_cloud_stats(cloud_sampled);
     }
 
@@ -515,7 +443,7 @@ int main(int argc, char **argv) {
             return std::abs(dist) > 2 * sigmaP;
           });
 
-      drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
+      draw::drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
     }
 
     const auto variational_dilation = [&](const auto &p) {
@@ -545,7 +473,7 @@ int main(int argc, char **argv) {
 
     if (ImGui::Button("Morphology (Variational)")) {
 
-      addVolumeGridByResolution("Morphology (Variational)", bounds,
+      draw::addVolumeGridByResolution("Morphology (Variational)", bounds,
                                 variational_morphology, gridResolution);
     }
 
@@ -581,13 +509,13 @@ int main(int argc, char **argv) {
             return Feature6D(p.x, p.y, p.z, 0, 0, 0) / sigmaP;
           }); // do not compare normals
 
-      drawPointCloud("0: Morphology (initial)", morphology_pointcloud)
+      draw::drawPointCloud("0: Morphology (initial)", morphology_pointcloud)
           ->setEnabled(false);
 
-      drawPointCloud("1: Morphology (subsampled)", morphology_subsampled)
+      draw::drawPointCloud("1: Morphology (subsampled)", morphology_subsampled)
           ->setEnabled(false);
-      auto pc_resampled =
-          drawPointCloud("2: Morphology (resampled)", morphology_resampled);
+      auto pc_resampled = draw::drawPointCloud("2: Morphology (resampled)",
+                                               morphology_resampled);
       pc_resampled->setEnabled(false);
 
       if (sampling_compute_pointnormal_embedding) {
@@ -601,10 +529,12 @@ int main(int argc, char **argv) {
             },
             resampling_iterations);
 
-        drawPointCloud("1.5: Morphology(subsampled 2)", morphology_subsampled_2)
+        draw::drawPointCloud("1.5: Morphology(subsampled 2)",
+                             morphology_subsampled_2)
             ->setEnabled(false);
 
-        drawPointCloud("2.5: Morphology(resampled 2)", morphology_resampled_2)
+        draw::drawPointCloud("2.5: Morphology(resampled 2)",
+                             morphology_resampled_2)
             ->setEnabled(false);
       }
 
@@ -629,14 +559,14 @@ int main(int argc, char **argv) {
       pc_resampled->addVectorQuantity("Jacobian Col 0 (dc / dx)", X);
       pc_resampled->addVectorQuantity("Jacobian Col 1 (dc / dy)", Y);
       pc_resampled->addVectorQuantity("Jacobian Col 2 (dc / dz)", Z);
-      drawPointCloud("3: Morphology (edges)", morphology_edges)
+      draw::drawPointCloud("3: Morphology (edges)", morphology_edges)
           ->setEnabled(false);
 
       const auto morphology_pc_final = std::move(morphology_resampled);
-      drawPointCloud("4: Morphology (final)", morphology_pc_final);
+      draw::drawPointCloud("4: Morphology (final)", morphology_pc_final);
 
       const auto morphology_apss = APSS(morphology_pc_final, pss_scale);
-      addVolumeGridByResolution(
+      draw::addVolumeGridByResolution(
           "Morphology (PSS)", bounds,
           [&morphology_apss, &pss_scale = pss_scale](const auto &p) {
             return morphology_apss.evaluate_surface(p);
@@ -649,7 +579,7 @@ int main(int argc, char **argv) {
           edge_sample(cloud_sampled, morphological_iterative_projection),
           radius * sigmaP, makePointNormal);
 
-      drawPointCloud("Edge sampling", edge_sampling);
+      draw::drawPointCloud("Edge sampling", edge_sampling);
     }
 
     if (ImGui::Button("Show gradients")) {
@@ -674,7 +604,7 @@ int main(int argc, char **argv) {
         positions.push_back(p2);
         normals.push_back(n2);
       }
-      drawPointCloud("projected", PointCloud(positions, normals));
+      draw::drawPointCloud("projected", PointCloud(positions, normals));
     }
 
     if (!polyscope::haveSelection()) {
@@ -853,7 +783,7 @@ int main(int argc, char **argv) {
 
       auto PSE_bounds = ::detail::Bounds(p - glm::vec3(1, 1, 1) * pse_scale,
                                          p + glm::vec3(1, 1, 1) * pse_scale);
-      addVolumeGridByResolution(
+      draw::addVolumeGridByResolution(
           "PSE", PSE_bounds,
           [&](const auto &x) {
             return structuring_elements::PointStructuringElement{pse_scale, p,
@@ -874,9 +804,9 @@ int main(int argc, char **argv) {
         auto max = 101;
         auto resolution = std::floor(max / sigmaP);
 
-        addVolumeGridByResolution("PSS", bounds, pss_sdf, resolution);
+        draw::addVolumeGridByResolution("PSS", bounds, pss_sdf, resolution);
       } else {
-        addVolumeGridByResolution("PSS", bounds, pss_sdf, gridResolution);
+        draw::addVolumeGridByResolution("PSS", bounds, pss_sdf, gridResolution);
       }
     }
 
@@ -887,7 +817,7 @@ int main(int argc, char **argv) {
         centroids.emplace_back(
             structuring_elements::fit(original_apss, p, sdf, sigmaC).c);
       }
-      drawPointCloud("centroids", centroids);
+      draw::drawPointCloud("centroids", centroids);
     }
 
     if (ImGui::Button("Mean shift")) {
@@ -910,10 +840,11 @@ int main(int argc, char **argv) {
         return neighbours;
       }();
 
-      auto ppc = drawPointCloud("p", {p}, polyscope::PointRenderMode::Sphere);
+      auto ppc =
+          draw::drawPointCloud("p", {p}, polyscope::PointRenderMode::Sphere);
 
-      auto npc =
-          drawPointCloud("knn", neighbours, polyscope::PointRenderMode::Sphere);
+      auto npc = draw::drawPointCloud("knn", neighbours,
+                                      polyscope::PointRenderMode::Sphere);
 
       // 2. initialize mean shift with n (usually 2) meaningful points
       // {c_j^0} := {closest points in PI under PSE distance}
@@ -945,7 +876,7 @@ int main(int argc, char **argv) {
           break;
         }
       }
-      drawPointCloud("candidates", cjs, polyscope::PointRenderMode::Quad);
+      draw::drawPointCloud("candidates", cjs, polyscope::PointRenderMode::Quad);
 
       const auto [converged_candidates, converged_grads] =
           structuring_elements::mean_shift(p, cjs, neighbours, sdf, pse_scale);
@@ -966,9 +897,9 @@ int main(int argc, char **argv) {
       gradY.push_back(glm::normalize(glm::column(J, 1)));
       gradZ.push_back(glm::normalize(glm::column(J, 2)));
 
-      auto convpc =
-          drawPointCloud("converged candidates", {converged_candidates[0]},
-                         polyscope::PointRenderMode::Sphere);
+      auto convpc = draw::drawPointCloud("converged candidates",
+                                         {converged_candidates[0]},
+                                         polyscope::PointRenderMode::Sphere);
       convpc->addScalarQuantity("distance", distances_converged)
           ->setEnabled(false);
       convpc->addVectorQuantity("gradX", gradX);
@@ -999,6 +930,5 @@ int main(int argc, char **argv) {
   };
 
   polyscope::screenshot();
-
   polyscope::show();
 }

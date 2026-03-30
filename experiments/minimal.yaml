@@ -1,0 +1,15 @@
+output_dir: results
+
+defaults:
+  pss_scale: 2.0
+  sigmaP: 1.0
+  sigmaN: 0.75
+  resampling_iterations: 5
+  grid_resolution: 200
+
+experiments:
+  - name: hand-dilation-sphere
+    input: resources/hand2.ply
+    operation: dilation
+    structuring_element: sphere
+    pse_scale: 2.5
