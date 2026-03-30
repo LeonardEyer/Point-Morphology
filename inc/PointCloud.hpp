@@ -240,11 +240,10 @@ struct PointCloud {
   }
 
   void translate(glm::vec3 translation) {
-       std::transform(positions.begin(), positions.end(), positions.begin(),
+    std::transform(positions.begin(), positions.end(), positions.begin(),
                    [&](auto &p) { return p + translation; });
- 
   }
-  
+
   PointCloud() { tree = std::make_unique<KDTreeT>(positions); };
 
   // Delete copy constructor
@@ -279,35 +278,33 @@ struct PointCloud {
   [[nodiscard]] inline float getNeighbourSpacing(const Position &p,
                                                  size_t k) const {
     const auto neighbours = tree->knn(p, k);
-
     auto sum = 0.0f;
-    for (const auto i : neighbours | std::views::keys) {
-      for (const auto j : neighbours | std::views::keys) {
-        if (i != j) {
-          sum += glm::distance(positions[i], positions[j]);
-        }
-      }
+    for (const auto &[idx, dist_sq] : neighbours) {
+      sum += std::sqrt(dist_sq);
     }
     return sum / static_cast<float>(neighbours.size());
   }
 
   template <typename WeightFunc>
-  [[nodiscard]] inline auto getWeightedPoints(const Position &p, size_t k, float h,
-                                const WeightFunc &weightFunc) const {
+  [[nodiscard]] inline auto
+  getWeightedPoints(const Position &p, size_t k, float h,
+                    const WeightFunc &weightFunc) const {
 
     auto weightedResult = std::vector<std::pair<size_t, float>>();
 
     // sorted
     const auto queryResult = tree->knn(p, k);
 
-    while (weightFunc(h, queryResult[0].second) <
-        10.f * std::numeric_limits<float>::epsilon()) {
-      // we need to increase the weighting
+    // grow h until the closest neighbour has nonzero weight.
+    // use sqrt so the comparison is in actual-distance space.
+    while (weightFunc(h, std::sqrt(queryResult[0].second)) <
+           10.f * std::numeric_limits<float>::epsilon()) {
       h *= 1.1f;
     }
 
-    for (const auto &[i, norm] : queryResult) {
-      auto weight = weightFunc(h, norm);
+    for (const auto &[i, dist_sq] : queryResult) {
+      auto weight =
+          weightFunc(h, std::sqrt(dist_sq)); // actual distance, not squared
       if (weight > 10.0 * std::numeric_limits<float>::epsilon()) {
         weightedResult.push_back(std::make_pair(i, weight));
       }

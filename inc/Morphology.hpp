@@ -101,11 +101,11 @@ using SDF = structuring_elements::PointStructuringElement::SDF;
 
 template <structuring_elements::Operation op>
 auto morph(const APSS &original_apss, const ::detail::Bounds &bounds,
-           const SDF &sdf, float sigmaP, float pss_scale, float pse_scale) {
+           const SDF &sdf, float sigmaP, float pse_scale) {
 
   const auto denseSampling = morphology::detail::sampleBoxVolume(
       bounds, sigmaP, [&](const auto &sample) {
-        auto dist = original_apss.evaluate_surface(sample, pss_scale);
+        auto dist = original_apss.evaluate_surface(sample);
 
         if constexpr (op == structuring_elements::Erosion) {
           dist += pse_scale; // Sample close to dilation surface
@@ -134,7 +134,7 @@ auto morph(const APSS &original_apss, const ::detail::Bounds &bounds,
     for (auto i = start; i < end; i++) {
       // now we iteratively project
       auto [p, n] = structuring_elements::project_iterative<op>(
-          original_apss, morphed_points[i], sdf, pss_scale, pse_scale);
+          original_apss, morphed_points[i], sdf, pse_scale);
 
       morphed_points[i] = p;
       morphed_normals[i] = n;

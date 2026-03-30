@@ -51,13 +51,13 @@ struct PlaneFitResult : FitResult {
 };
 
 inline float distance(const SphereFitResult &fit,
-                                const PointCloud::Position &x) noexcept {
+                      const PointCloud::Position &x) noexcept {
   auto sdval = std::fabs(glm::length(fit.center - x) - fit.radius);
   return sdval * fit.params.apssign(x);
 }
 
 inline float distance(const PlaneFitResult &fit,
-                                const PointCloud::Position &x) noexcept {
+                      const PointCloud::Position &x) noexcept {
   auto sdval = std::fabs(glm::dot(x, fit.params.u_mid) + fit.params.u0) /
                glm::length(fit.params.u_mid);
   return sdval * fit.params.apssign(x);
@@ -72,8 +72,6 @@ inline PointCloud::Position gradient(const SphereFitResult &fit,
   }
   v = glm::normalize(v);
 
-  // if we go in the gradient direction we expect a positive sign?.
-  // i guess this only makes sense if we expect x to be close to the surface
   if (fit.params.apssign(x + v) < 0) {
     v *= -1;
   }
@@ -84,8 +82,13 @@ inline PointCloud::Position gradient(const SphereFitResult &fit,
 inline PointCloud::Position gradient(const PlaneFitResult &fit,
                                      const PointCloud::Position &p) {
   auto n = fit.normal;
-  float len = glm::length(n);
 
+  // FIX (prev): verify outward sign for plane, matching the sphere branch.
+  if (fit.params.apssign(p) < 0) {
+    n *= -1;
+  }
+
+  float len = glm::length(n);
   if (len > 0.0f) {
     return n / len;
   }
@@ -95,20 +98,22 @@ inline PointCloud::Position gradient(const PlaneFitResult &fit,
 template <typename T>
 inline constexpr PointCloud::Position
 project(const T &fit, const PointCloud::Position &p) noexcept {
-  float dist = distance(fit, p);     // signed distance
-  glm::vec3 grad = gradient(fit, p); // unit gradient
-  return p - dist * grad;            // projected point
+  float dist = distance(fit, p);
+  glm::vec3 grad = gradient(fit, p);
+  return p - dist * grad;
 }
 
 struct APSS {
 
-  const PointCloud &pointCloud;
+  const PointCloud &pointCloud; // underlying pointcloud data
+  float sigma;                  // the APSS kernel weight
 
-  APSS(const PointCloud &_pointCloud) : pointCloud(_pointCloud) {};
+  APSS(const PointCloud &_pointCloud, float _sigma)
+      : pointCloud(_pointCloud), sigma(_sigma) {};
 
   using FitVariant = std::variant<SphereFitResult, PlaneFitResult>;
 
-  [[nodiscard]] FitVariant fit(const PointCloud::Position &x, float h) const {
+  [[nodiscard]] FitVariant fit(const PointCloud::Position &x) const {
     constexpr double beta = 1.0;
 
     const auto spacing = pointCloud.getNeighbourSpacing(x, 6);
@@ -118,22 +123,24 @@ struct APSS {
     };
 
     // reference to h
-    const auto weight = [spacing](float h, const auto &norm) {
-      return phi(norm / (h * spacing));
+    const auto weight = [spacing](float h, const auto &dist) {
+      return phi(dist / (h * spacing));
     };
 
-    const auto neighbours = pointCloud.getWeightedPoints(x, 20, h, weight);
+    const auto neighbours = pointCloud.getWeightedPoints(x, 20, sigma, weight);
 
-    float minDistSq = neighbours[0].second;
-    float maxAllowedDist = h * spacing * 2.0f; 
+    // FIX (prev): Require at least 4 neighbours with nonzero weight before
+    // attempting a fit (paper §7.3 "extra zeros" suppression).
+    constexpr int minNeighboursForFit = 4;
+    const float maxAllowedDist = sigma * spacing * 2.0f;
 
-    if (minDistSq > (maxAllowedDist * maxAllowedDist)) {
-      
+    if (static_cast<int>(neighbours.size()) < minNeighboursForFit ||
+        neighbours[0].second > (maxAllowedDist * maxAllowedDist)) {
+
       auto n = pointCloud.normals[neighbours[0].first];
       auto p = pointCloud.positions[neighbours[0].first];
 
       FitParams params{-glm::dot(n, p), n, 0};
-
       return PlaneFitResult(params);
     }
 
@@ -168,7 +175,6 @@ struct APSS {
 
     assert(Sw != 0.0f);
 
-    // Compute coefficients
     const auto denom = Sw * Swpp - SwpSwp;
 
     double u_d1 = std::abs(denom) >= std::numeric_limits<double>::epsilon()
@@ -188,35 +194,36 @@ struct APSS {
     }
   }
 
-  inline float evaluate_surface(const PointCloud::Position &x, float h) const {
+  inline float evaluate_surface(const PointCloud::Position &x) const {
     return std::visit([&](const auto &fit) { return distance(fit, x); },
-                      fit(x, h));
+                      fit(x));
   }
 
-  inline PointCloud::Normal evaluate_gradient(const PointCloud::Position &x,
-                                              float h) const {
+  inline PointCloud::Normal
+  evaluate_gradient(const PointCloud::Position &x) const {
     return std::visit([&](const auto &fit) { return gradient(fit, x); },
-                      fit(x, h));
+                      fit(x));
   }
 };
 
 inline std::pair<PointCloud::Position, PointCloud::Normal>
-project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
+project_iterative(const APSS &pss, const PointCloud::Position &x,
                   size_t maxIter = 100) {
   const auto spacing = pss.pointCloud.getNeighbourSpacing(x, 6);
   const auto eps = 1e-4f * spacing;
 
-  const auto P = [&pss, h = scale, eps](const auto &p) {
-    auto fitted = pss.fit(p, h);
+  const auto Project = [&pss](const PointCloud::Position &query,
+                              const PointCloud::Position &fitAt) {
+    auto fitted = pss.fit(fitAt);
     return std::visit(
-        [&p](const auto &fitvariant) { return project(fitvariant, p); },
+        [&query](const auto &fitvariant) { return project(fitvariant, query); },
         fitted);
   };
 
   auto xi = x;
-  auto xip1 = P(xi);
+  auto xip1 = Project(x, xi);
 
-  for (auto i = 0; i < maxIter; i++) {
+  for (auto i = 0; i < static_cast<int>(maxIter); i++) {
 
     if (!std::isfinite(glm::distance2(xi, xip1)))
       break;
@@ -225,10 +232,10 @@ project_iterative(const APSS &pss, const PointCloud::Position &x, float scale,
       break;
 
     xi = xip1;
-    xip1 = P(xip1);
+    xip1 = Project(x, xi);
   }
 
-  const auto normal = pss.evaluate_gradient(x, scale);
+  const auto normal = pss.evaluate_gradient(xip1);
 
   return {xip1, normal};
 }

@@ -10,9 +10,11 @@
 #include "Utils.hpp"
 #include "polyscope/options.h"
 #include "polyscope/screenshot.h"
+#include "polyscope/view.h"
 
 #include <atomic>
 #include <cassert>
+#include <cinttypes>
 #include <cmath>
 #include <functional>
 #include <glm/ext/matrix_transform.hpp>
@@ -200,7 +202,7 @@ void log_point_cloud_stats(const PointCloud &cloud) {
 int gridResolution = 100;
 
 float pse_scale = 2.5f;
-float pss_scale = 2.f;
+float pss_scale = 2.0f;
 float sigmaP = std::min(pss_scale, pse_scale) / 2;
 float radius = 2.5 * sigmaP;
 float sigmaN = 0.75;
@@ -365,11 +367,20 @@ void iterative_projection_debug_view(const auto &pos, auto &projection,
   pc->addScalarQuantity("distance", distances);
 }
 
-int main() {
+int main(int argc, char **argv) {
   polyscope::init();
+  polyscope::view::setWindowSize(1024, 1024);
 
-  //polyscope::view::setUpDir(polyscope::UpDir::ZUp);
-  //polyscope::view::setFrontDir(polyscope::FrontDir::NegYFront);
+  polyscope::CameraParameters params(
+      polyscope::CameraIntrinsics::fromFoVDegVerticalAndAspect(45, 1.),
+      polyscope::CameraExtrinsics::fromVectors(
+          glm::vec3{2., 2., 2.},  // world-space position
+          glm::vec3{-1., 0., 0.}, // world-space look direction
+          glm::vec3{0., 1., 0.}   // world-space up direction
+          ));
+
+  // set the viewport view to those parameters
+  polyscope::view::setViewToCamera(params);
   polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
 
   auto plane1 = polyscope::addSceneSlicePlane(true);
@@ -387,14 +398,15 @@ int main() {
   // auto cloud = readNOFF("./resources/4: Morphology (final).txt");
   // auto cloud = readNOFF("./resources/cone.txt");
   // auto cloud = readNOFF("./resources/cube.txt");
-  auto cloud = readNOFF("./resources/thin-sheet.txt");
-  //auto cloud = fromPLY("./resources/hand2.ply");
-  // auto cloud = fromPLY("./resources/bunny.ply");
+  // auto cloud = readNOFF("./resources/thin-sheet.txt");
+  // auto cloud = fromPLY("./resources/hand2.ply");
+  // auto cloud = fromPLY("./resources/cap.ply");
+  auto cloud = fromPLY("./resources/armadillo.ply");
+  //  auto cloud = fromPLY("./resources/bunny.ply");
   {
     // Rescale to have bounding box of 100
-    auto bounds = detail::computeBoundingBox(cloud.positions, 1);
+    auto bounds = detail::computeBoundingBox(cloud.positions, 0);
     auto scaling = glm::distance(bounds.second, bounds.first);
-    std::cout << "scaling = " << scaling << std::endl;
     cloud.scale(100 / scaling);
   }
 
@@ -413,10 +425,11 @@ int main() {
   glm::vec3 diff = maxB - minB;
   float scale = 1.0f / glm::compMax(diff); // largest axis -> 1
 
-  const auto small_sdf = [=, pss = APSS(cloud_sampled)](const auto &x) {
+  const auto small_sdf = [=,
+                          pss = APSS(cloud_sampled, pss_scale)](const auto &x) {
     // Scale query point back to original coordinates
     glm::vec3 original_p = x / scale + center;
-    return pss.evaluate_surface(original_p, pss_scale);
+    return pss.evaluate_surface(original_p);
   };
 
   polyscope::state::userCallback = [&]() {
@@ -447,8 +460,8 @@ int main() {
     if (ImGui::Button("Resample")) {
       cloud_sampled = resample(
           cloud_sampled, radius * sigmaP, makePointNormal,
-          [apss = APSS(cloud_sampled)](const auto &p) {
-            return project_iterative(apss, p, pss_scale);
+          [apss = APSS(cloud_sampled, pss_scale)](const auto &p) {
+            return project_iterative(apss, p);
           },
           resampling_iterations);
 
@@ -457,7 +470,6 @@ int main() {
     }
 
     ImGui::Combo("PSE shape", &selected_pse, pse_shapes, 4);
-
     ImGui::Combo("Morphological operation", &selected_morphology_op,
                  morphology_operations, 2);
 
@@ -484,16 +496,15 @@ int main() {
         return structuring_elements::project_iterative<Erosion>;
       }
     }();
-    auto original_apss = APSS(cloud_sampled);
+    auto original_apss = APSS(cloud_sampled, pss_scale);
     const auto morphological_iterative_projection = [&](const auto &p) {
-      return se_project_iterative(original_apss, p, sdf, pss_scale, pse_scale,
-                                  100, 1e-4f);
+      return se_project_iterative(original_apss, p, sdf, pse_scale, 100, 1e-4f);
     };
 
     if (ImGui::Button("Dense sampling")) {
       const auto denseSampling = morphology::detail::sampleBoxVolume(
           bounds, sigmaP, [&](const auto &sample) {
-            auto dist = original_apss.evaluate_surface(sample, pss_scale);
+            auto dist = original_apss.evaluate_surface(sample);
 
             if (se_op == Erosion) {
               dist += pse_scale; // Sample close to dilation surface
@@ -511,7 +522,7 @@ int main() {
       const auto pse_distance =
           structuring_elements::fit(original_apss, p, sdf, pse_scale)
               .distance(p);
-      const auto apss_distance = original_apss.evaluate_surface(p, pss_scale);
+      const auto apss_distance = original_apss.evaluate_surface(p);
 
       return std::min(pse_distance, apss_distance);
     };
@@ -520,7 +531,7 @@ int main() {
       const auto pse_distance =
           structuring_elements::fit(original_apss, p, sdf, pse_scale)
               .distance(p);
-      const auto apss_distance = original_apss.evaluate_surface(p, pss_scale);
+      const auto apss_distance = original_apss.evaluate_surface(p);
 
       return std::max(-pse_distance, apss_distance);
     };
@@ -541,7 +552,7 @@ int main() {
     if (ImGui::Button("Morphology (Sampled)")) {
 
       const auto morphology_pointcloud =
-          morph(original_apss, bounds, sdf, sigmaP, pss_scale, pse_scale);
+          morph(original_apss, bounds, sdf, sigmaP, pse_scale);
 
       const auto makePointCentroid = [sigmaC = sigmaC, sdf = sdf,
                                       &pss = original_apss](const auto &p,
@@ -556,8 +567,8 @@ int main() {
       auto morphology_resampled = resample(
           morphology_subsampled, radius * sigmaP, makePointCentroid,
           [&](const auto &p) {
-            return se_project_iterative(original_apss, p, sdf, pss_scale,
-                                        pse_scale, 100, 1e-4f);
+            return se_project_iterative(original_apss, p, sdf, pse_scale, 100,
+                                        1e-4f);
           },
           resampling_iterations);
 
@@ -585,8 +596,8 @@ int main() {
         auto morphology_resampled_2 = resample(
             morphology_subsampled_2, radius * sigmaP, makePointNormal,
             [&](const auto &p) {
-              return se_project_iterative(original_apss, p, sdf, pss_scale,
-                                          pse_scale, 100, 1e-4f);
+              return se_project_iterative(original_apss, p, sdf, pse_scale, 100,
+                                          1e-4f);
             },
             resampling_iterations);
 
@@ -624,11 +635,11 @@ int main() {
       const auto morphology_pc_final = std::move(morphology_resampled);
       drawPointCloud("4: Morphology (final)", morphology_pc_final);
 
-      const auto morphology_apss = APSS(morphology_pc_final);
+      const auto morphology_apss = APSS(morphology_pc_final, pss_scale);
       addVolumeGridByResolution(
           "Morphology (PSS)", bounds,
           [&morphology_apss, &pss_scale = pss_scale](const auto &p) {
-            return morphology_apss.evaluate_surface(p, pss_scale);
+            return morphology_apss.evaluate_surface(p);
           },
           gridResolution);
     }
@@ -648,7 +659,7 @@ int main() {
       for (const auto &p : cloud_sampled.positions) {
         gradients.push_back(std::visit(
             [&p](const auto &fitvariant) { return gradient(fitvariant, p); },
-            original_apss.fit(p, pss_scale)));
+            original_apss.fit(p)));
       }
       pc->addVectorQuantity("gradients", gradients)->setEnabled(true);
     }
@@ -659,7 +670,7 @@ int main() {
       std::vector<glm::vec3> normals;
 
       for (const auto &p : cloud_sampled.positions) {
-        auto [p2, n2] = project_iterative(original_apss, p, pss_scale);
+        auto [p2, n2] = project_iterative(original_apss, p);
         positions.push_back(p2);
         normals.push_back(n2);
       }
@@ -750,10 +761,10 @@ int main() {
 
     if (ImGui::Button("Project iteratively")) {
       const auto projection = [&original_apss](const auto &p, auto iter) {
-        return project_iterative(original_apss, p, pss_scale, iter);
+        return project_iterative(original_apss, p, iter);
       };
       const auto grad_distance = [&original_apss](const auto &p) {
-        const auto fit = original_apss.fit(p, pss_scale);
+        const auto fit = original_apss.fit(p);
         return std::visit(
             [&p](const auto &fitvariant) {
               return std::make_pair(gradient(fitvariant, p),
@@ -767,8 +778,8 @@ int main() {
     if (ImGui::Button("Project iteratively (Morphological)")) {
 
       const auto projection = [&](const auto &p, auto iter) {
-        return se_project_iterative(original_apss, p, sdf, pss_scale, pse_scale,
-                                    iter, 1e-4f);
+        return se_project_iterative(original_apss, p, sdf, pse_scale, iter,
+                                    1e-4f);
       };
       const auto variational_morphology = [&](const auto &p) {
         const auto pse_distance =
@@ -805,8 +816,8 @@ int main() {
 
       importance_debug_view(
           fetched_point_cloud, makePointNormal,
-          [apss = APSS(fetched_point_cloud)](const auto &p) {
-            return project_iterative(apss, p, pss_scale);
+          [apss = APSS(fetched_point_cloud, pss_scale)](const auto &p) {
+            return project_iterative(apss, p);
           },
           p, n, false);
     }
@@ -832,8 +843,8 @@ int main() {
       importance_debug_view(
           fetched_point_cloud, makePointCentroid,
           [&](const auto &p) {
-            return se_project_iterative(original_apss, p, sdf, pss_scale,
-                                        pse_scale, 100, 1e-4f);
+            return se_project_iterative(original_apss, p, sdf, pse_scale, 100,
+                                        1e-4f);
           },
           p, n, true);
     }
@@ -854,9 +865,9 @@ int main() {
 
     if (ImGui::Button("Show PSS")) {
 
-      const auto pss_sdf = [pss = APSS(fetched_point_cloud),
+      const auto pss_sdf = [pss = APSS(fetched_point_cloud, pss_scale),
                             &pss_scale = pss_scale](const auto &p) {
-        return pss.evaluate_surface(p, pss_scale);
+        return pss.evaluate_surface(p);
       };
 
       if (pss_use_spacing) {

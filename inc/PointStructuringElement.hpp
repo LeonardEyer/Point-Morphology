@@ -289,7 +289,7 @@ shift<Operation::Erosion>(const PointStructuringElement &pse,
 template <Operation op>
 std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x,
-                  const PointStructuringElement::SDF &sdf, float pss_scale,
+                  const PointStructuringElement::SDF &sdf,
                   float pse_scale, unsigned maxIter = 100,
                   float threshold = 1e-4f) {
 
@@ -300,7 +300,7 @@ project_iterative(const APSS &pss, const PointCloud::Position &x,
     // TODO: Speed up indicator function computation
     // remark: we add a bufer zone of the pse_scale to make sure that we are not
     // "inside" the PSE
-    auto inside = pss.evaluate_surface(p, pss_scale) <= (pse_scale / 2);
+    auto inside = pss.evaluate_surface(p) <= (pse_scale / 2);
 
     // shift then project
     return project(fitted, shift<op>(fitted, p, inside));
