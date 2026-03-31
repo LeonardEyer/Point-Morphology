@@ -63,7 +63,4 @@ target_link_libraries(pointmorph INTERFACE
 add_executable(point-morphology src/main.cpp)
 target_link_libraries(point-morphology PRIVATE pointmorph)
 
-add_executable(experiment-runner src/experiment_runner.cpp)
-target_link_libraries(experiment-runner PRIVATE pointmorph)
-
 add_subdirectory(tests)

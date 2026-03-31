@@ -3,7 +3,9 @@
 #include "APSS.hpp"
 #include "PointCloud.hpp"
 #include "Utils.hpp"
+#include "glm/common.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <functional>
 #include <glm/ext/vector_float3.hpp>
@@ -42,7 +44,7 @@ const auto roundcube = [](const glm::vec3 &p) {
   return glm::length(glm::max(q, glm::vec3(0.0f))) +
          std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f) - r;
 };
-  
+
 } // namespace sdf
 
 struct PointStructuringElement {
@@ -289,9 +291,8 @@ shift<Operation::Erosion>(const PointStructuringElement &pse,
 template <Operation op>
 std::pair<PointCloud::Position, PointCloud::Normal>
 project_iterative(const APSS &pss, const PointCloud::Position &x,
-                  const PointStructuringElement::SDF &sdf,
-                  float pse_scale, unsigned maxIter = 100,
-                  float threshold = 1e-4f) {
+                  const PointStructuringElement::SDF &sdf, float pse_scale,
+                  unsigned maxIter = 100, float threshold = 1e-4f) {
 
   const auto P = [&](const auto &p) {
     auto fitted = fit(pss, p, sdf, pse_scale);

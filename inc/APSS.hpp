@@ -5,11 +5,14 @@
 
 #include <Eigen/Dense>
 #include <cmath>
+#include <csignal>
 #include <glm/geometric.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtx/hash.hpp>
 #include <glm/gtx/norm.hpp>
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
 #include <variant>
 
 struct FitParams {
@@ -204,6 +207,79 @@ struct APSS {
     return std::visit([&](const auto &fit) { return gradient(fit, x); },
                       fit(x));
   }
+};
+
+struct CachedAPSS : APSS {
+  float cellSize;
+  // Cache mapping grid coordinates to the computed fit
+  mutable std::unordered_map<glm::ivec3, FitVariant> cache;
+
+  CachedAPSS(const PointCloud &_pointCloud, float _sigma, float _cellSize)
+      : APSS(_pointCloud, _sigma), cellSize(_cellSize) {}
+
+  // Helper to convert world position to grid integer coordinates
+  [[nodiscard]] glm::ivec3 getGridIndex(const PointCloud::Position &x) const {
+    return glm::ivec3(glm::floor(x / cellSize));
+  }
+
+  [[nodiscard]] FitVariant fit(const PointCloud::Position &x) const {
+    glm::ivec3 idx = getGridIndex(x);
+
+    // 1. Use find to avoid triggering default construction via operator[]
+    auto it = cache.find(idx);
+    if (it != cache.end()) {
+      return it->second;
+    }
+    std::cout << "idx = ["<< idx.x << ", " << idx.y << ", " << idx.z <<"]" << std::endl;
+    throw std::runtime_error("Can only query cache");
+
+    // 2. Compute the fit
+    PointCloud::Position cellCenter = (glm::vec3(idx) + 0.5f) * cellSize;
+    FitVariant result = APSS::fit(cellCenter);
+
+    // 3. Use emplace or insert instead of operator[]
+    cache.emplace(idx, result);
+
+    return result;
+  }
+
+  void precompute(const std::pair<glm::vec3, glm::vec3> &bounds) {
+    const auto &[minB, maxB] = bounds;
+
+    // Calculate how many cells we need in each dimension
+    // Add a small epsilon to maxB to ensure we cover the boundary
+    glm::vec3 range = maxB - minB;
+    glm::ivec3 counts = glm::ivec3(glm::ceil(range / cellSize));
+
+    for (int z = 0; z < counts.z; ++z) {
+      for (int y = 0; y < counts.y; ++y) {
+        for (int x = 0; x < counts.x; ++x) {
+          // Determine the grid index relative to world origin
+          // Note: getGridIndex logic must match: floor(pos / cellSize)
+          glm::vec3 samplePos = minB + glm::vec3(x, y, z) * cellSize;
+          glm::ivec3 idx = getGridIndex(samplePos);
+ 
+          // Compute fit at the center of this specific cell
+          glm::vec3 cellCenter = (glm::vec3(idx) + 0.5f) * cellSize;
+
+          // Use emplace to avoid the default-constructor error
+          cache.emplace(idx, APSS::fit(cellCenter));
+        }
+      }
+    }
+  }
+
+  inline float evaluate_surface(const PointCloud::Position &x) const {
+    // Uses the cached fit for the cell containing x
+    return std::visit([&](const auto &f) { return distance(f, x); }, fit(x));
+  }
+
+  inline PointCloud::Normal
+  evaluate_gradient(const PointCloud::Position &x) const {
+    return std::visit([&](const auto &f) { return gradient(f, x); }, fit(x));
+  }
+
+  void clearCache() { cache.clear(); }
 };
 
 inline std::pair<PointCloud::Position, PointCloud::Normal>

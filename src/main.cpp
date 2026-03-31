@@ -1,7 +1,6 @@
 #include "APSS.hpp"
 #include "Draw.hpp"
 #include "Embedding.hpp"
-#include "ExperimentConfig.hpp"
 #include "FeatureSample.hpp"
 #include "Morphology.hpp"
 #include "PointCloud.hpp"
@@ -38,6 +37,15 @@
 
 #include <utility>
 #include <vector>
+
+struct ExperimentParams {
+  float pse_scale = 2.5f;
+  float pss_scale = 2.0f;
+  float sigmaP = 1.25f;
+  float sigmaN = 0.75f;
+  int resampling_iterations = 10;
+  int grid_resolution = 100;
+};
 
 inline std::ostream &operator<<(std::ostream &os, const glm::mat3 &m) {
   os << "[\n";
@@ -103,7 +111,6 @@ void log_point_cloud_stats(const PointCloud &cloud) {
 }
 
 int gridResolution = 100;
-
 float pse_scale = 2.5f;
 float pss_scale = 2.0f;
 float sigmaP = std::min(pss_scale, pse_scale) / 2;
@@ -345,7 +352,7 @@ int main(int argc, char **argv) {
   // auto cloud = readNOFF("./resources/cone.txt");
   // auto cloud = readNOFF("./resources/cube.txt");
   //  auto cloud = readNOFF("./resources/thin-sheet.txt");
-  //  auto cloud = fromPLY("./resources/hand2.ply");
+  // auto cloud = fromPLY("./resources/hand2.ply");
   //  auto cloud = fromPLY("./resources/cap.ply");
   // auto cloud = fromPLY("./resources/armadillo.ply");
   //   auto cloud = fromPLY("./resources/bunny.ply");
@@ -364,18 +371,46 @@ int main(int argc, char **argv) {
       detail::computeBoundingBox(cloud_sampled.positions, pse_scale * 1.5);
 
   // Compute bounding box of the original cloud
-  auto small_bounds = detail::computeBoundingBox(cloud_sampled.positions, 1);
-  glm::vec3 minB = bounds.first;
-  glm::vec3 maxB = bounds.second;
+  auto small_bounds = detail::computeBoundingBox(cloud_sampled.positions, 0);
+  glm::vec3 minB = small_bounds.first;
+  glm::vec3 maxB = small_bounds.second;
   glm::vec3 center = (minB + maxB) * 0.5f;
   glm::vec3 diff = maxB - minB;
   float scale = 1.0f / glm::compMax(diff); // largest axis -> 1
 
-  const auto small_sdf = [=,
-                          pss = APSS(cloud_sampled, pss_scale)](const auto &x) {
+  auto cached_apss = CachedAPSS(cloud_sampled, pss_scale, sigmaP);
+  cached_apss.precompute(bounds);
+
+  const auto small_sdf = [=, &cached_apss](const auto &x) {
     // Scale query point back to original coordinates
     glm::vec3 original_p = x / scale + center;
-    return pss.evaluate_surface(original_p);
+
+    // Check if point is inside the precomputed bounds
+    if (original_p.x > small_bounds.first.x &&
+        original_p.y > small_bounds.first.y &&
+        original_p.z > small_bounds.first.z &&
+        original_p.x < small_bounds.second.x &&
+        original_p.y < small_bounds.second.y &&
+        original_p.z < small_bounds.second.z) {
+      return cached_apss.evaluate_surface(original_p);
+    }
+
+    // Fallback: signed distance to the AABB surface (positive = outside)
+    glm::vec3 clamped =
+        glm::clamp(original_p, small_bounds.first, small_bounds.second);
+    glm::vec3 d_outside = original_p - clamped; // non-zero only on outside axes
+    glm::vec3 d_inside = glm::abs(
+        clamped - small_bounds.first); // distance to each face from inside
+
+    float dist_outside = glm::length(d_outside); // > 0 iff truly outside
+    // Closest face distance when inside (negative for interior, but here we're
+    // outside)
+    float dist_to_face =
+        glm::compMin(small_bounds.second - clamped); // always >= 0 on boundary
+
+    return dist_outside > 0.0f
+               ? dist_outside   // outside: positive distance to box
+               : -dist_to_face; // on boundary: hand off sign from nearest face
   };
 
   polyscope::state::userCallback = [&]() {
@@ -492,7 +527,7 @@ int main(int argc, char **argv) {
     if (ImGui::Button("Morphology (Variational)")) {
 
       draw::addVolumeGridByResolution("Morphology (Variational)", bounds,
-                                variational_morphology, gridResolution);
+                                      variational_morphology, gridResolution);
     }
 
     if (ImGui::Button("Morphology (Sampled)")) {
@@ -577,11 +612,22 @@ int main(int argc, char **argv) {
       pc_resampled->addVectorQuantity("Jacobian Col 0 (dc / dx)", X);
       pc_resampled->addVectorQuantity("Jacobian Col 1 (dc / dy)", Y);
       pc_resampled->addVectorQuantity("Jacobian Col 2 (dc / dz)", Z);
+
       draw::drawPointCloud("3: Morphology (edges)", morphology_edges)
           ->setEnabled(false);
 
       const auto morphology_pc_final = std::move(morphology_resampled);
-      draw::drawPointCloud("4: Morphology (final)", morphology_pc_final);
+      auto pc_final =
+          draw::drawPointCloud("4: Morphology (final)", morphology_pc_final);
+
+      std::vector<glm::vec3> grads;
+      for (const auto &p : morphology_resampled.positions) {
+        const auto dist_func = [fit = structuring_elements::fit(
+                                    original_apss, p, sdf, pse_scale, false)](
+                                   const auto x) { return fit.distance(x); };
+        grads.push_back(-util::gradient(p, dist_func, sigmaP));
+      }
+      pc_final->addVectorQuantity("Gradient (FD)", grads);
 
       const auto morphology_apss = APSS(morphology_pc_final, pss_scale);
       draw::addVolumeGridByResolution(
