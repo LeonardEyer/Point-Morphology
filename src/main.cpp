@@ -1,6 +1,7 @@
 #include "APSS.hpp"
 #include "Draw.hpp"
 #include "Embedding.hpp"
+#include "ExperimentConfig.hpp"
 #include "FeatureSample.hpp"
 #include "Morphology.hpp"
 #include "PointCloud.hpp"
@@ -10,6 +11,7 @@
 #include "Utils.hpp"
 
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <glm/ext/matrix_transform.hpp>
@@ -49,17 +51,6 @@ inline std::ostream &operator<<(std::ostream &os, const glm::mat3 &m) {
   }
   os << "]";
   return os;
-}
-
-void writeNOFF(std::string out, const PointCloud &cloud) {
-  auto ofstream = std::ofstream(out);
-  ofstream << cloud.positions.size() << "\n";
-  for (auto i = 0; i < cloud.positions.size(); i++) {
-    auto &p = cloud.positions[i];
-    auto &n = cloud.normals[i];
-    ofstream << p.x << " " << p.y << " " << p.z << " " << n.x << " " << n.y
-             << " " << n.z << "\n";
-  }
 }
 
 PointCloud readNOFF(std::string in) {
@@ -116,7 +107,7 @@ int gridResolution = 100;
 float pse_scale = 2.5f;
 float pss_scale = 2.0f;
 float sigmaP = std::min(pss_scale, pse_scale) / 2;
-float radius = 2.5 * sigmaP;
+float radius = 2.5;
 float sigmaN = 0.75;
 float &sigmaC = pse_scale;
 int resampling_iterations = 10;
@@ -130,6 +121,35 @@ int selected_pse = 0;
 
 static const char *morphology_operations[]{"Dilation", "Erosion"};
 int selected_morphology_op = 0;
+
+// Run a single morphological operation (dilation or erosion) and return the
+// post-processed result.
+template <structuring_elements::Operation op>
+PointCloud runMorphOp(PointCloud &cloud, const ExperimentParams &p,
+                      const morphology::SDF &sdf) {
+
+  auto bounds = detail::computeBoundingBox(cloud.positions, p.pse_scale * 1.5f);
+  auto apss = APSS(cloud, p.pss_scale);
+
+  auto morphology_pointcloud =
+      morphology::morph<op>(apss, bounds, sdf, p.sigmaP, p.pse_scale);
+
+  const auto makePointCentroid = [&](const auto &pt, const auto &) {
+    const auto c = structuring_elements::fit(apss, pt, sdf, p.pse_scale).c;
+    return util::concat(pt / p.sigmaP, c / p.pse_scale);
+  };
+
+  auto morphology_subsampled =
+      subsample(morphology_pointcloud, radius * p.sigmaP, makePointCentroid);
+
+  const auto se_project = [&](const auto &pt) {
+    return structuring_elements::project_iterative<op>(apss, pt, sdf,
+                                                       p.pse_scale, 100, 1e-4f);
+  };
+
+  return resample(morphology_subsampled, radius * p.sigmaP, makePointCentroid,
+                  se_project, p.resampling_iterations);
+}
 
 struct Kernel {
   Eigen::MatrixXd K; // inverse kernel matrix
@@ -304,10 +324,8 @@ int main(int argc, char **argv) {
 
   {
     polyscope::view::setWindowSize(1024, 1024);
-    std::string json =
-        R"({"farClipRatio":20.0,"fov":45.0,"nearClipRatio":0.005,"projectionMode":"Perspective","viewMat":[0.826793074607849,2.56113708019257e-09,0.562506377696991,0.0,-0.114914402365685,0.978909909725189,0.168905660510063,0.0,-0.550643444061279,-0.204290300607681,0.809355676174164,-121.243576049805,0.0,0.0,0.0,1.0],"windowHeight":1018,"windowWidth":1024})";
 
-    polyscope::view::setCameraFromJson(json, false);
+    polyscope::view::setCameraFromJson(draw::camera_json, false);
     polyscope::options::groundPlaneMode =
         polyscope::GroundPlaneMode::ShadowOnly;
 
@@ -572,6 +590,28 @@ int main(int argc, char **argv) {
             return morphology_apss.evaluate_surface(p);
           },
           gridResolution);
+    }
+
+    const auto params = ExperimentParams{
+        .pse_scale = pse_scale,
+        .pss_scale = pss_scale,
+        .sigmaP = sigmaP,
+        .sigmaN = sigmaN,
+        .resampling_iterations = resampling_iterations,
+        .grid_resolution = gridResolution,
+    };
+
+    if (ImGui::Button("Closing")) {
+
+      auto dilated = runMorphOp<Dilation>(cloud_sampled, params, sdf);
+      auto opening = runMorphOp<Erosion>(dilated, params, sdf);
+      draw::drawPointCloud("Closing", opening);
+    }
+    if (ImGui::Button("Opening")) {
+
+      auto eroded = runMorphOp<Erosion>(cloud_sampled, params, sdf);
+      auto closing = runMorphOp<Dilation>(eroded, params, sdf);
+      draw::drawPointCloud("Opening", closing);
     }
 
     if (ImGui::Button("Feature detection")) {

@@ -9,6 +9,11 @@
 
 namespace draw {
 
+static const std::string camera_json =
+    R"(
+{"farClipRatio":20.0,"fov":35.0,"nearClipRatio":0.005,"projectionMode":"Perspective","viewMat":[0.815649330615997,4.4703483581543e-08,0.578546643257141,0.0,0.165076032280922,0.958429634571075,-0.232728332281113,0.0,-0.554496288299561,0.285328894853592,0.781742453575134,-103.623413085938,0.0,0.0,0.0,1.0],"windowHeight":1018,"windowWidth":1024}
+)";
+
 inline auto drawPointCloud(
     std::string name, const PointCloud &p,
     polyscope::PointRenderMode mode = polyscope::PointRenderMode::Quad) {

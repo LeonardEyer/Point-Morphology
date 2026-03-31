@@ -333,6 +333,17 @@ inline PointCloud fromPLY(const std::string &filename) {
   return {positions, normals};
 }
 
+inline void writeNOFF(std::string out, const PointCloud &cloud) {
+  auto ofstream = std::ofstream(out);
+  ofstream << cloud.positions.size() << "\n";
+  for (auto i = 0; i < cloud.positions.size(); i++) {
+    auto &p = cloud.positions[i];
+    auto &n = cloud.normals[i];
+    ofstream << p.x << " " << p.y << " " << p.z << " " << n.x << " " << n.y
+             << " " << n.z << "\n";
+  }
+}
+
 inline auto maximum_point_spacing(const PointCloud &cloud) noexcept {
   float max_spacing = 0;
 

@@ -26,7 +26,7 @@ const auto torus = [](const glm::vec3 &p) {
 };
 
 const auto cube = [](const glm::vec3 &p) {
-  const auto b = glm::vec3(1.f / sqrt(3));
+  const auto b = glm::vec3(1.f); // / sqrt(3));
   glm::vec3 d = glm::abs(p) - b; // distance along each axis
   float outsideDist =
       glm::length(glm::max(d, glm::vec3(0.0f))); // distance outside cube
@@ -36,7 +36,7 @@ const auto cube = [](const glm::vec3 &p) {
 };
 
 const auto roundcube = [](const glm::vec3 &p) {
-  static const auto b = glm::vec3(1.f / sqrt(3));
+  static const auto b = glm::vec3(1.f); // sqrt(3));
   static const auto r = .1f;
   const auto q = glm::abs(p) - b + r;
   return glm::length(glm::max(q, glm::vec3(0.0f))) +
