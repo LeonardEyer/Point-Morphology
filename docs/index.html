@@ -1,0 +1,555 @@
+<!doctype html>
+<html class="no-js">
+
+<head>
+	<meta charset="utf-8">
+	<title>Point Morphology</title>
+	<meta name="description" content="">
+	<meta name="viewport" content="width=device-width">
+	<link href="http://fonts.googleapis.com/css?family=Raleway:300,400,600" rel="stylesheet" type="text/css">
+	<link rel="icon" type="image/svg+xml" href="favicon.svg">
+	<link rel="icon" type="image/png" href="favicon.png">
+	<link rel="icon" type="image/x-icon" href="favicon.ico">
+	<link rel="stylesheet" type="text/css" href="style.css">
+	<script type="text/javascript" async
+		src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+
+<body>
+	<div class="container">
+		<nav class="navbar">
+			<div class="container">
+				<ul class="navbar-list">
+					<li class="navbar-item">
+						<a class="navbar-link" href="#intro">Intro</a>
+					</li>
+					<li class="navbar-item">
+						<a class="navbar-link" href="#morph">Mathematical Morphology</a>
+					</li>
+					<li class="navbar-item">
+						<a class="navbar-link" href="#projection">Projection</a>
+					</li>
+					<li class="navbar-item">
+						<a class="navbar-link" href="#sampling">Sampling</a>
+					</li>
+					<li class="navbar-item">
+						<a class="navbar-link" href="#results">Results</a>
+					</li>
+					<li class="navbar-item">
+						<a class="navbar-link" href="#discussion">Discussion</a>
+					</li>
+					<li class="navbar-item">
+						<a class="navbar-link" href="#references">References</a>
+					</li>
+				</ul>
+			</div>
+		</nav>
+		<section class="header" id="intro">
+			<h2 class="title">Point Morphology</h2>
+			<h6>Seminar Project</h6>
+			<div class="row">
+				<img class="u-max-full-width" src="images/teaser.png">
+				<p><i>Morphology as a shape transformation method typically is defined in terms of supersets of input
+						point sets. If repeated applications of morphological operations are required, approaches
+						relying on supersets become impractical due to a failue to capture sharp features and their
+						computational complexity. The proposed method which relies on projection and sampling sampling
+						strategies aims to address these challenges.</i></p>
+			</div>
+		</section>
+		<div class="docs-section" , id="morph">
+			<h3 class="section-heading">Mathematical Morphology</h3>
+			<p class="section-description">Mathematical Morphology is a framework for shape transformation based on
+				operations between sets. Given a shape and a <b>Structuring Element</b> (SE), operations such as
+				dilation and erosion are defined by dragging the SE along the boundary of the input shape, either
+				extruding or eroding it accordingly. This process is visualized below. The classical formulation relies
+				on the <a href="https://en.wikipedia.org/wiki/Minkowski_addition">Minkowski addition</a>, which operates
+				directly on sets and is computationally expensive by nature. The method presented in the following
+				sections aims to improve performance by restricting computation to a point sampling of the surface,
+				avoiding the overhead of full set-based representations.</p>
+			<div class="row" style="text-align: center;">
+				<h5 class="docs-header">2D Morphology</h5>
+				<div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+
+					<figure style="margin: 0;">
+						<img class="u-max-full-width"
+							src="https://commons.wikimedia.org/wiki/Special:FilePath/Dilation.png"
+							alt="Dilation example">
+						<figcaption><b>Dilation</b>: extrudes shape boundary by the SE</figcaption>
+					</figure>
+
+					<figure style="margin: 0;">
+						<img class="u-max-full-width"
+							src="https://commons.wikimedia.org/wiki/Special:FilePath/Erosion.png" alt="Erosion example">
+						<figcaption><b>Erosion</b>: erodes shape boundary by the SE</figcaption>
+					</figure>
+
+					<figure style="margin: 0;">
+						<img class="u-max-full-width"
+							src="https://commons.wikimedia.org/wiki/Special:FilePath/Opening.png" alt="Opening example">
+						<figcaption><b>Opening</b>: erosion then dilation; removes small protrusions</figcaption>
+					</figure>
+
+					<figure style="margin: 0;">
+						<img class="u-max-full-width"
+							src="https://commons.wikimedia.org/wiki/Special:FilePath/Closing.png" alt="Closing example">
+						<figcaption><b>Closing</b>: dilation then erosion; fills small holes</figcaption>
+					</figure>
+
+				</div>
+				<p style="margin-top: 0.8rem; font-size: 0.9em; color: #777;">
+					Images via <a href="https://en.wikipedia.org/wiki/Mathematical_morphology">Wikipedia – Mathematical
+						Morphology</a>
+					(CC BY-SA)
+				</p>
+			</div>
+		</div>
+		<div class="docs-section" id="projection">
+			<h3 class="section-heading">Morphological Projection</h3>
+			<p>The core contribution of the paper is a reformulation of morphological operations as a projection onto a
+				<b>Point Structuring Element</b> (PSE). Rather than computing Minkowski sums, the method projects
+				surface points onto a PSE that is fitted to the original surface, approximating dilation and erosion in
+				a purely point-based setting.
+			</p>
+			<!-- Floating image -->
+			<h4 class="section-heading">Point Structuring Element</h4>
+			<div style="float: right; width: 40%; margin: 0 0 0px 5px; text-align: center;">
+				<!-- <h5 class="docs-header">Point Structuring Element</h5> -->
+				<img class="u-max-full-width" src="images/pse_projection.png">
+				<p>PSE centered at \(\mathbf{c^*}\) on the surface and the desired (dilated) projection onto the
+					boundary \(\mathcal{P}_D\)</p>
+			</div>
+			<p class="section-description">
+				The PSE is the primtive or brush which defines the local shape used in morphological operations. It is
+				the analogue of the classical SE but defined in an
+				<i>implicit form</i>. A scaled and translated PSE is defined as:
+			</p>
+			<p style="text-align:center;">
+				$$\mathscr{B}_\mathbf{c}(\mathbf{x})
+				= s \, \mathscr{B}\left(\frac{\mathbf{x} - \mathbf{c}}{s}\right)$$
+			</p>
+			<p>
+				where \(s\) controls the scale of the structuring element,
+				\(\mathbf c\) denotes its center and \(\mathscr{B}\) is the variational
+				representation of the centered and normalized PSE shape (e.g. for a sphere
+				\(\mathscr B(\mathbf x) = \|\mathbf x\|_2 - 1\)). This formulation measures
+				the signed distance from any point \(\mathbf x\) to the boundary of the
+				PSE. A formulation like this will become important since it allows us to define a projection operator
+				\(\mathcal P\) that can take a point in space and project it right onto the boundary given that we can
+				evaluate the gradient of our PSE:</p>
+			<p style="text-align:center;">
+				$$\mathcal P(\mathbf x) = \mathbf x - \mathscr B_{\mathbf c} (\mathbf x) \frac{\nabla \mathscr
+				B_{\mathbf c}(\mathbf x)}{\|\nabla \mathscr B_{\mathbf c}(\mathbf x)\|}$$
+			</p>
+			<h4>Fitting</h4>
+
+			<div style="float: left; width: 40%; margin: 0 20px 0px 5px; text-align: center;">
+				<!-- <h5 class="docs-header">Optimized center</h5> -->
+				<img class="u-max-full-width" src="images/fitting.png">
+				<p>Find optimal center \(\color{red}{\mathbf{c^*}(\mathbf x)}\) as weigthed mean of surface samples in
+					neighbourhood of \(\color{blue}{\mathbf{x}}\) defining the PSE boundary
+					\(\color{limegreen}{\mathscr{B}}\)</p>
+			</div>
+
+			<p class="section-description">To actually perform a projection onto a PSE which conforms to our notion of
+				Morphology we need to ensure that the PSE is centered at the correct postion <b>on</b> the original
+				surface. For this purpose we introduce the notion of a <i>fitted</i> PSE centered at optimal location
+				\(\mathbf{c^*}\). We say that for a point of interest \(\mathbf x\), a PSE is fitted if:</p>
+			<p style="text-align:center;">
+				$$\DeclareMathOperator*{\argmin}{argmin}
+				\mathbf{c^*}(\mathbf x) = \argmin_{\mathscr{I}(\mathbf c) = 0} \mathscr{B}_{\mathbf c}(\mathbf x)$$
+			</p>
+			<p>With \(\mathscr I\) the <i>implicit function</i> defining our original input surface. Essentially, we
+				<i>slide</i> the PSE along our surface until the distance from our point to its boundary is minimized.
+				As it stands this is a global optimization problem with a nonlinear constraint. To solve this problem we
+				can reformulate it as a maximization of a weighted <b>kernel-density estimation</b> (KDE)
+			</p>
+			<p style="text-align:center;">
+				$$
+				\DeclareMathOperator*{\argmax}{argmax}
+				\mathbf{c^*}(\mathbf x)
+				=
+				\argmax_{\mathbf c \in \mathbb{R}^3 \, \mathscr{I}(\mathbf p_i) = 0}
+
+				\sum_i
+				\underbrace{
+				\omega_\sigma(\mathscr{B}_{\mathbf p_i}(\mathbf x))
+				}_{\text{weighting}}
+				\underbrace{
+				\omega_\sigma(\|\mathbf c - \mathbf p_i \|_2)
+				}_{\text{kernel (standard KDE)}}
+				$$
+			</p>
+			<p>where \(\mathscr B\) functions as our weighting wrapped by a gaussian which turns our problem into a
+				maximization problem. Written in this form we can use the <b>mean-shift</b> procedure to obtain a
+				candiate that maximizes our new objective.</p>
+			<h4>Iterative Projection</h4>
+			<div style="float: right; width: 40%; margin: 0 0 0px 5px; text-align: center;">
+				<!-- <h5 class="docs-header">Erosion Shift</h5> -->
+				<img class="u-max-full-width" src="images/shift.png">
+				<p>PSE projection of point \(\mathbf x\) outside the surface is prepended by the Erosion shift
+					\(\epsilon_E\) in order to reach the erosion boundary</p>
+			</div>
+			<p>Actually the projection operator so far does not tell the whole story, since the projection result is
+				dependent on the original point \(\mathbf x\) we start with, to which the optimal center
+				\(\mathbf{c^*}\) is fitted. Further, given that we want to perform either a <b>Dilation</b> or an
+				<b>Erosion</b> we want the make sure that we always project <i>outwards/inwards</i>.
+			</p>
+			<p>To tackle this, a shift operation \(\epsilon\) is prepended, making sure that the point of interested is
+				first moved close to the desired Morphological boundary, before being projected \[
+				\mathcal P_D = \mathcal P \circ \epsilon_D \\
+				\mathcal P_E = \mathcal P \circ \epsilon_E
+				\] where \(\epsilon_D(\mathbf x) = \mathbf x + (1 - \mathscr I_h) \delta (\mathbf x)\) being the
+				dilation shift operator, \(\mathscr I_h: \mathbb{R}^3 \rightarrow \{0, 1\}\) a indicator function giving
+				\(\mathscr I_h(\mathbf x)= 1\) when \(\mathbf x\) is inside the surface.
+			</p>
+			<p>To ensure a robust projection the final step is to repeat the projection until convergence: $$ \mathcal
+				P_D^\infty = (\mathbf x) = \mathcal P_D \circ \dots \circ \mathcal P_D$$</p>
+		</div>
+		<div class="docs-section" id="sampling">
+			<h3 class="section-heading">Sampling</h3>
+			<p class="section-description">Naive sampling of the Morphological surface by starting with a dense set of
+				points and performing the projection \(\mathcal P_D^\infty\) will leave us with point clusters and gaps
+				on the surface (see <ref>Figure 1</ref>). To accurately represent the surface by some implicit surface
+				model we aim to have points equally distributed across the surface while having more samples in regions
+				with higher curvature. Taking results from <a href="#2">[2]</a> we can achieve this by filtering out
+				duplicates thrugh <b>subsampling</b> (<ref>Figure 2</ref>) and finally moving the remaining points to
+				<i>undersampled</i> regions thrugh <b>resampling</b> (<ref>Figure 3</ref>)
+			</p>
+			<div class="row">
+				<div class="one-third column category" style="text-align: center;">
+					<img class="u-max-full-width" src="images/initial.png">
+					<p>Initial dense sampling \(\Pi_{2D}\)</p>
+					<h5 class="docs-header">Figure 1</h5>
+				</div>
+				<div class="one-third column category" style="text-align: center;">
+					<img class="u-max-full-width" src="images/subsample.png">
+					<p>Subsampling</p>
+					<h5 class="docs-header">Figure 2</h5>
+				</div>
+				<div class="one-third column category" style="text-align: center;">
+					<img class="u-max-full-width" src="images/resample.png">
+					<p>Morpho-adaptive sampling \( \Pi_{2D}^* \)</p>
+					<h5 class="docs-header">Figure 3</h5>
+				</div>
+			</div>
+			<h4 class="section-heading">Point Importance Metric</h4>
+			<p>Both subsampling and resampling as defined in <a href="#2">[2]</a> rely on evaluating an importance
+				metric \(s(\mathbf{\hat x})\) for a point of interest on the surface. In the original paper this is
+				defined as $$
+				s (\mathbf {\hat x}) = 1 - \mathbf k^T \mathbf K^{-1} \mathbf k
+				$$ Where \(K_{ij} = k(\mathbf{\hat x}_i, \mathbf{\hat x}_j)\). and \(\mathbf{k}_i = k(\mathbf{\hat x},
+				\mathbf{\hat x}_i)\) and \(k\) a gaussian kernel. And we embed our position and fitted center in a
+				feature space: $$\mathbf{\hat x} = \left[\frac{\mathbf x}{\sigma_p} \,\frac{\mathbf{c^*}(\mathbf
+				x)}{\sigma_c}\right] \in \mathbb R^6$$ where \(\sigma_p, \sigma_c\) can be seen as controlling the width
+				of a positional and centroid gaussian kernel respectively. E.g a larger value for \(\sigma_p\) leading
+				to an enlarged region in which neighbours are considered simmilar, thus a sparser subsampling and
+				therefore \(\sigma_p \propto\) the resulting point spacing of the output pointcloud.</p>
+			<!-- <h4 class="section-heading">Feature sampling</h4> -->
+			<!-- <p>Application of a morphological operation can result in sharp edges of the output shape (see <ref>Figure 4</ref>). Extra care needs to be taken if we want to ensure that is is represented by the point sampling. For this purpose, using the method established by <a>TODO [ref]</a> we estimate the local surface curvature using quadrics and project onto a feature line defined by: -->
+			<!-- 	 $$ -->
+			<!-- 	 insert edge detection -->
+			<!-- 	 $$ -->
+			<!-- 	 I have found the detection by eigen value differences lacking in robustness. For this purpose and also for efficientcy, before constructing any quadrics I use the variance of the normals as an indicator for the local curvature. -->
+			<!-- 	 $$ -->
+			<!-- 	 \sigma^2_{\mathbf{n}} = \frac{1}{|N|} \sum_{i \in N} \| \mathbf{n}_i - \bar{\mathbf{n}} \|^2 -->
+			<!-- 	 $$ -->
+			<!-- 	 and only project if \(\sigma^2_{\mathbf{n}}\) -->
+			<!-- </p> -->
+		</div>
+		<div class="docs-section" id="results">
+			<h3 class="section-heading">Results</h3>
+			<p class="section-description">
+				Results on three base models: <b>Hand</b>, <b>Bunny</b>, and <b>Dragon</b>
+				for all morphological operations and two PSE shapes. The bounding box is scaled to have a diagonal
+				length of 100. Feature-aware sampling was not used only morpho-adaptive resampling.</p>
+			<i>
+				Select an operation and structuring element below. Hover any result card to compare against the input.
+			</i>
+			<input type="radio" name="pse" id="r-pse-sph" checked>
+			<input type="radio" name="pse" id="r-pse-cub">
+			<input type="radio" name="pse" id="r-pse-cyl">
+			<input type="radio" name="op" id="r-op-dil" checked>
+			<input type="radio" name="op" id="r-op-ero">
+			<input type="radio" name="op" id="r-op-ope">
+			<input type="radio" name="op" id="r-op-clo">
+
+			<!-- ── Controls ─────────────────────────────────────────── -->
+			<div class="res-controls">
+
+				<div class="ctrl-group">
+					<span class="ctrl-label">Structuring Element</span>
+					<div class="ctrl-pills">
+						<label for="r-pse-sph" class="pill">Sphere</label>
+						<label for="r-pse-cub" class="pill">Cube</label>
+						<!-- <label for="r-pse-cyl" class="pill">Input</label> -->
+					</div>
+				</div>
+
+				<div class="ctrl-group">
+					<span class="ctrl-label">Operation</span>
+					<div class="ctrl-pills">
+						<label for="r-op-dil" class="pill">Dilation</label>
+						<label for="r-op-ero" class="pill">Erosion</label>
+						<label for="r-op-ope" class="pill">Opening</label>
+						<label for="r-op-clo" class="pill">Closing</label>
+					</div>
+				</div>
+			</div>
+
+			<!-- ── Model grid ────────────────────────────────────────── -->
+			<div class="res-grid">
+
+
+				<!-- ── Hand ──────────────────────────────────────────────── -->
+				<div class="res-card">
+					<div class="card-viewer">
+						<div class="before-layer">
+							<img src="images/hand-input.png" class="vimg" alt="Hand – Input">
+							<span class="vlabel">Input</span>
+						</div>
+						<div class="after-layer">
+							<img src="images/hand-dilation-sphere.png" class="ri ri-sph-dil" alt="Dilation">
+							<img src="images/hand-erosion-sphere.png" class="ri ri-sph-ero" alt="Erosion">
+							<img src="images/hand-opening-sphere.png" class="ri ri-sph-ope" alt="Opening">
+							<img src="images/hand-closing-sphere.png" class="ri ri-sph-clo" alt="Closing">
+							<img src="images/hand-dilation-cube.png" class="ri ri-cub-dil" alt="Dilation">
+							<img src="images/hand-erosion-cube.png" class="ri ri-cub-ero" alt="Erosion">
+							<img src="images/hand-opening-cube.png" class="ri ri-cub-ope" alt="Opening">
+							<img src="images/hand-closing-cube.png" class="ri ri-cub-clo" alt="Closing">
+						</div>
+					</div>
+					<div class="card-meta ri ri-sph-dil">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-sph-ero">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 1\)</div>
+					<div class="card-meta ri ri-sph-ope">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-sph-clo">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-dil">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 4\)</div>
+					<div class="card-meta ri ri-cub-ero">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 1\)</div>
+					<div class="card-meta ri ri-cub-ope">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 3\)</div>
+					<div class="card-meta ri ri-cub-clo">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+				</div>
+
+				<!-- ── Bunny ──────────────────────────────────────────────── -->
+				<div class="res-card">
+					<div class="card-viewer">
+						<div class="before-layer">
+							<img src="images/bunny-input.png" class="vimg" alt="Bunny – Input">
+							<span class="vlabel">Input</span>
+						</div>
+						<div class="after-layer">
+							<img src="images/bunny-dilation-sphere.png" class="ri ri-sph-dil" alt="Dilation">
+							<img src="images/bunny-erosion-sphere.png" class="ri ri-sph-ero" alt="Erosion">
+							<img src="images/bunny-opening-sphere.png" class="ri ri-sph-ope" alt="Opening">
+							<img src="images/bunny-closing-sphere.png" class="ri ri-sph-clo" alt="Closing">
+							<img src="images/bunny-dilation-cube.png" class="ri ri-cub-dil" alt="Dilation">
+							<img src="images/bunny-erosion-cube.png" class="ri ri-cub-ero" alt="Erosion">
+							<img src="images/bunny-opening-cube.png" class="ri ri-cub-ope" alt="Opening">
+							<img src="images/bunny-closing-cube.png" class="ri ri-cub-clo" alt="Closing">
+						</div>
+					</div>
+					<div class="card-meta ri ri-sph-dil">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-sph-ero">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-sph-ope">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-sph-clo">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-dil">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-ero">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-ope">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-clo">\(\sigma = 1 \quad \sigma_p = 1 \quad s = 5\)</div>
+				</div>
+
+				<!-- ── Dragon ──────────────────────────────────────────────── -->
+				<div class="res-card">
+					<div class="card-viewer">
+						<div class="before-layer">
+							<img src="images/dragon-input.png" class="vimg" alt="Dragon – Input">
+							<span class="vlabel">Input</span>
+						</div>
+						<div class="after-layer">
+							<img src="images/dragon-dilation-sphere.png" class="ri ri-sph-dil" alt="Dilation">
+							<img src="images/dragon-erosion-sphere.png" class="ri ri-sph-ero" alt="Erosion">
+							<img src="images/dragon-opening-sphere.png" class="ri ri-sph-ope" alt="Opening">
+							<img src="images/dragon-closing-sphere.png" class="ri ri-sph-clo" alt="Closing">
+							<img src="images/dragon-dilation-cube.png" class="ri ri-cub-dil" alt="Dilation">
+							<img src="images/dragon-erosion-cube.png" class="ri ri-cub-ero" alt="Erosion">
+							<img src="images/dragon-opening-cube.png" class="ri ri-cub-ope" alt="Opening">
+							<img src="images/dragon-closing-cube.png" class="ri ri-cub-clo" alt="Closing">
+						</div>
+					</div>
+					<div class="card-meta ri ri-sph-dil">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 2\)</div>
+					<div class="card-meta ri ri-sph-ero">variational</div>
+					<div class="card-meta ri ri-sph-ope">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-sph-clo">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-dil">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-ero">variational</div>
+					<div class="card-meta ri ri-cub-ope">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+					<div class="card-meta ri ri-cub-clo">\(\sigma = 2 \quad \sigma_p = 1 \quad s = 5\)</div>
+				</div>
+
+			</div>
+		</div>
+		<div class="docs-section" id="discussion">
+			<h3 class="section-heading">Discussion</h3>
+			<p>The projection operator was straightforward to implement given its analytical form. The most significant
+				implementation effort went into the importance metric used for subsampling and resampling, which was
+				guided by the reference implementation of <a href="#2">[2]</a>. To serve as a readable learning
+				resource, the source code is written to mirror the theory as closely as possible, with only limited
+				performance optimization. This is clearly reflected in runtime when running morphology on dense point
+				clouds. Most time is spent in the subsampling and resampling stage. The variational forms of the
+				dilation and erosion operators:
+				$$
+				D_{\mathscr{I},\mathscr{B}} = \min(\mathscr{B}_{\mathbf{c}^*}(\mathbf x), \mathscr{I}(\mathbf x)) \qquad
+				E_{\mathscr{I},\mathscr{B}} = \max(-\mathscr{B}_{\mathbf{c}^*}(\mathbf x), \mathscr{I}(\mathbf x))
+				$$
+				was particularly efficient to implement, as it reduces to evaluating the iterative projection for any
+				point on a grid followed by a min/max query. This representation provides a useful preview rendering of
+				the target erosion or dilation, and in practice served as a guide for choosing parameters before running
+				the full pipeline. Parameters such as the initial point spacing \(\sigma_p\) and the PSS support radius
+				have a considerable impact on both performance and output quality.</p>
+			<h4>Parameter coice</h4>
+			<p>The guidance provided in the original papers regarding the relationship between structuring element size,
+				initial point spacing, and PSS support radius can in practice be insufficient to avoid artifacts. For
+				openings and closings in particular, the quality of the intermediate result is critical, as any noise in
+				the PSS fit is amplified during the subsequent PSE fitting stage. Obtaining visually clean results
+				therefore requires careful tuning and inspection of intermediate results. For the results the following
+				parameter relationsips where chosen initially and potentially fine-tuned for cleaner results.
+				<!-- The suggested point spacing of \(\sigma_p = \min(\sigma,\, s)\,/\,2\) is especially prone to undersampling when the structuring element size \(l\) is large relative to the scale of fine surface features. -->
+			</p>
+			<figure>
+				<!-- <h5 class="docs-header">Table 1</h5> -->
+				<table>
+					<thead>
+						<tr>
+							<th>Parameter</th>
+							<th>Role</th>
+							<th>Suggested value</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td class="param">\(\sigma\)</td>
+							<td class="role">Support size of the MLS weighting kernel \(\omega_\sigma\); scale at which
+								the PSS primitive is fitted to \(\Pi\)</td>
+							<td class="value">Set to the kernel support of the input surface PSS; acts as an upper bound
+								in the point-spacing rule for \(\sigma_p\)</td>
+						</tr>
+						<tr>
+							<td class="param">\(\sigma_p\)</td>
+							<td class="role">Width of the gaussian kernel applied to the positional component of our
+								embedding space. A larger value resulting in a larger point spacing</td>
+							<td class="value">\(\sigma_p = \min(\sigma,\, s)\,/\,2\), where \(s\) is the PSE minimum
+								local feature size (e.g. radius for a spherical PSE)</td>
+						</tr>
+						<tr>
+							<td class="param">\(\sigma_c\)</td>
+							<td class="role">The width of the gaussian kernel comparing centroid positions. The
+								"morphological" distance from <toto>add reference</todo>
+							</td>
+							<td class="value">\(\sigma_c = s\)</td>
+						</tr>
+						<!-- <tr>		      -->
+						<!--   <td class="param">\(s\)</td> -->
+						<!--   <td class="role">PSE scale; equals the radius for a spherical PSE and the general scale factor in \(\mathcal{B}_c(\mathbf{x}) = s\,\mathcal{B}((\mathbf{x}-\mathbf{c})/s)\)</td> -->
+						<!--   <td class="value">Application-defined; directly sets the morphological offset magnitude. \(\sigma_c\) is explicitly recommended to equal \(s\)</td> -->
+						<!-- </tr> -->
+					</tbody>
+				</table>
+				<figcaption>Suggested parameter values collected from <a href="#1">[1]</a> and <a href="#2">[2]</a>.
+				</figcaption>
+			</figure>
+
+			<h4>Artifacts</h4>
+			<p>During testing, the iterative projection operator occasionally converged to points far from the surface,
+				manifesting as outliers in the output point cloud and in turn introducing noise in the PSS
+				representation. In <a href="#3">[3]</a> the authors note that the spherical fit can produce unwanted
+				stationary points near the boundary of the surface definition domain. I did not implement the suggested
+				mitigation strategy.</p>
+			<p>Sharp features introduced by erosion or dilation can lead to a locally noisy PSS representation, which is
+				then amplified in subsequent pipeline stages such as opening and closing. Whether this reflects a
+				fundamental limitation of the APSS implementation in capturing rapidly varying normals, or a wrong
+				choice in parameters was often times hard to determine. One possibility for could be to incorporate
+				dedicated sharp-edge handling as outlined in <a href="#3">[3]</a>.</p>
+
+			<figure id="morpho-adapt-fig">
+				<input type="radio" name="ma-viz" id="r-ma-viz-pos" checked>
+				<input type="radio" name="ma-viz" id="r-ma-viz-cen">
+				<input type="radio" name="ma-met" id="r-ma-met-nor" checked>
+				<input type="radio" name="ma-met" id="r-ma-met-cen">
+
+				<div class="res-controls" style="margin: 1.5rem 0 2rem;">
+					<div class="ctrl-group">
+						<span class="ctrl-label">Visualization</span>
+						<div class="ctrl-pills">
+							<label for="r-ma-viz-pos" class="pill">Point samples</label>
+							<label for="r-ma-viz-cen" class="pill">Centroids</label>
+						</div>
+					</div>
+					<div class="ctrl-group">
+						<span class="ctrl-label">Distance metric</span>
+						<div class="ctrl-pills">
+							<label for="r-ma-met-nor" class="pill">Normal</label>
+							<label for="r-ma-met-cen" class="pill">Centroid</label>
+						</div>
+					</div>
+				</div>
+				<div class="ma-grid">
+					<div class="ma-card">
+						<img src="images/dragon-position-normal.png" class="ma-img ma-pos-nor"
+							alt="Dragon – point samples, normal distance">
+						<img src="images/dragon-position-centroid.png" class="ma-img ma-pos-cen"
+							alt="Dragon – point samples, centroid distance">
+						<img src="images/dragon-centroid-normal.png" class="ma-img ma-cen-nor"
+							alt="Dragon – centroids, normal distance">
+						<img src="images/dragon-centroid-centroid.png" class="ma-img ma-cen-cen"
+							alt="Dragon – centroids, centroid distance">
+					</div>
+					<div class="ma-card">
+						<img src="images/hand-position-normal.png" class="ma-img ma-pos-nor"
+							alt="Hand – point samples, normal distance">
+						<img src="images/hand-position-centroid.png" class="ma-img ma-pos-cen"
+							alt="Hand – point samples, centroid distance">
+						<img src="images/hand-centroid-normal.png" class="ma-img ma-cen-nor"
+							alt="Hand – centroids, normal distance">
+						<img src="images/hand-centroid-centroid.png" class="ma-img ma-cen-cen"
+							alt="Hand – centroids, centroid distance">
+					</div>
+
+				</div>
+
+				<figcaption>
+					Morpho-adaptive sampling using a normal-based vs. centroid-based distance metric,
+					shown for point sample positions and optimized centroids on the Hand and Dragon models.
+				</figcaption>
+
+			</figure>
+			<h4>Morpho-adaptivity</h4>
+			<p>For computing the importance metric, the authors replaced the distance between normals with a distance
+				between optimized centroids, with the goal of distributing samples more evenly across the original
+				surface. In practice, this reformulation did not produce a noticeable difference. The stated motivation
+				is &ldquo;to distinguish samples that may be close in \(\mathbb{R}^3\) but belong to different surface
+				regions (e.g., two sides of a thin sheet)&rdquo;, but it is unclear why a normal-based distance would be
+				insufficient for this purpose: on a thin sheet, normals on opposite sides differ substantially even when
+				positions are close. The effect of the distance metric choice is
+				visualized below. Even in the case of a thin slab model I couldn't produce a meaningful visual
+				difference.
+			</p>
+		<div class="docs-section" id="references">
+			<h3 class="section-heading">References</h3>
+			<ul class="popover-list">
+				<li class="popover-item" id="1">
+					<!--A link to this may look like: <a href="#1">[1]</a>-->
+					[1] Calderon, Stéphane, and Tamy Boubekeur. “Point Morphology.” ACM Transactions on Graphics 33,
+					no. 4 (2014): 1–13. <a
+						href="https://doi.org/10.1145/2601097.2601130">https://doi.org/10.1145/2601097.2601130</a>.</i>
+				</li>
+				<li class="popover-item" id="2">
+					[2] Öztireli, A. Cengiz, Marc Alexa, and Markus Gross. “Spectral Sampling of Manifolds.” ACM
+					Transactions on Graphics 29, no. 6 (2010): 1–8. <a
+						href="https://doi.org/10.1145/1882261.1866190">https://doi.org/10.1145/1882261.1866190</a>.
+				</li>
+				<li class="popover-item" id="3">
+				</li>
+				[3] Guennebaud, Gaël, and Markus Gross. “Algebraic Point Set Surfaces.” ACM Transactions on Graphics
+				26, no. 3 (2007): 23. <a
+					href="https://doi.org/10.1145/1276377.1276406">https://doi.org/10.1145/1276377.1276406</a>.
+			</ul>
+		</div>
+	</div>
+</body>
