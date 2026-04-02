@@ -24,7 +24,7 @@ TEST(PointStructuringElementTests, TestProjection) {
     EXPECT_EQ(project(pse, p), glm::vec3(s, 0, 0));
   }
 
-  static const auto edge_length = 1.f / std::sqrtf(3);
+  static const auto edge_length = 1.f / std::sqrt(3);
   for (auto s = 1; s < 9; s++) {
     const auto c = glm::vec3(0, 0, 0);
     const auto B = sdf::cube;
