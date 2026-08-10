@@ -1,8 +1,8 @@
 # Point Morphology
 
-Point cloud morphology: dilation, erosion, opening, and closing operations performed directly on point sets, without building a mesh or a full Minkowski-sum representation.
+Point cloud morphology: dilation, erosion, opening, and closing operations performed directly on point sets, without building a mesh or a full Minkowski-sum representation. 
 
-This implements the method from Calderon & Boubekeur's *Point Morphology*. A full write-up with the math and results is here: https://leonardeyer.github.io/Point-Morphology/
+A full write-up with the math and results lives [here](https://leonardeyer.github.io/Point-Morphology)
 
 <table>
   <tr>
@@ -41,24 +41,12 @@ cmake --build build
 ```
 
 ## Usage
-
 Interactive GUI mode, just supply a point cloud:
-
 ```bash
 ./build/point-morphology -[noff/ply] [path-to-file]
 ```
-## Recommended Workflow
-Start the GUI buy supplying the standford bunny:
-```bash
-./build/point-morphology -ply resources/bunny.ply
-```
+For performance and the quality of the PSS representation it is advised to make use of initial sub- and resampling of the input mesh.
 
-### Parameters
-
-| Parameter | Role | Suggested value |
-|---|---|---|
-| `sigma` | Support size of the MLS weighting kernel; scale at which the surface fit is done | Set to the kernel support of the input surface |
-| `sigma_p` | Width of the positional kernel in the sampling embedding; controls output point spacing | `sigma_p = min(sigma, s) / 2`, where `s` is the PSE's minimum local feature size |
-| `sigma_c` | Width of the kernel comparing fitted centroids | `sigma_c = s` |
-
-Parameter guidance is approximate; for openings and closings especially, intermediate results are sensitive to noise in the surface fit and may need manual tuning.
+<p align="center">
+  <img src="docs/videos/example.gif" width="600" alt="example">
+</p>
