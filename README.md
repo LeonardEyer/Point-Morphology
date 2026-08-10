@@ -2,7 +2,7 @@
 
 Point cloud morphology: dilation, erosion, opening, and closing operations performed directly on point sets, without building a mesh or a full Minkowski-sum representation. 
 
-A full write-up with the math and results lives [here](https://leonardeyer.github.io/Point-Morphology)
+A full write-up with the math and results lives [here](https://leonardeyer.codeberg.page/Point-Morphology/)
 
 <table>
   <tr>
