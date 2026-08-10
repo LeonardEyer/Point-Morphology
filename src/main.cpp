@@ -318,7 +318,7 @@ int main(int argc, char **argv) {
 
   std::string flag = argv[1];
   std::string path = argv[2];
-  PointCloud cloud; // Assuming your point cloud object type
+  PointCloud cloud;
 
   if (flag == "-noff") {
     cloud = readNOFF(path);
@@ -414,45 +414,31 @@ int main(int argc, char **argv) {
   };
 
   polyscope::state::userCallback = [&]() {
-    ImGui::InputFloat("radius", &radius);
+    // Two buttons side by side, filling one row.
+    const auto half_width = [] {
+      return ImVec2(
+          (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) *
+              0.5f,
+          0.f);
+    };
+    constexpr auto rest_width = ImVec2(-FLT_MIN, 0.f);
 
-    if (ImGui::InputFloat("PSE Scale", &pse_scale)) {
-      bounds =
-          detail::computeBoundingBox(cloud_sampled.positions, pse_scale * 1.5);
+    if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::InputFloat("radius", &radius);
+
+      if (ImGui::InputFloat("PSE Scale", &pse_scale)) {
+        bounds = detail::computeBoundingBox(cloud_sampled.positions,
+                                            pse_scale * 1.5);
+      }
+
+      ImGui::InputFloat("PSS support", &pss_scale);
+      ImGui::InputFloat("sigmaP", &sigmaP);
+      ImGui::InputFloat("sigmaN", &sigmaN);
+      ImGui::InputFloat("sigmaC", &sigmaC);
+      ImGui::InputInt("Grid resolution", &gridResolution);
+      ImGui::Checkbox("PSS use sigmaP", &pss_use_spacing);
+      ImGui::Combo("PSE shape", &selected_pse, pse_shapes, 4);
     }
-
-    ImGui::InputFloat("PSS Kernel Support", &pss_scale);
-    ImGui::InputFloat("sigmaP", &sigmaP);
-    ImGui::InputFloat("sigmaN", &sigmaN);
-    ImGui::InputFloat("sigmaC", &sigmaC);
-    ImGui::InputInt("Grid resolution", &gridResolution);
-    ImGui::InputFloat("Mean shift neighbours", &mean_shift_search_radius);
-    ImGui::Checkbox("PSS use sigmaP", &pss_use_spacing);
-    ImGui::Checkbox("Compute sampling using point and normal embedding",
-                    &sampling_compute_pointnormal_embedding);
-
-    if (ImGui::Button("Show subsampling")) {
-      cloud_sampled = subsample(cloud, radius * sigmaP, makePointNormal);
-      subsampled = draw::drawPointCloud("subsampled", cloud_sampled);
-      log_point_cloud_stats(cloud_sampled);
-    }
-    ImGui::InputInt("Resampling iterations", &resampling_iterations);
-
-    if (ImGui::Button("Resample")) {
-      cloud_sampled = resample(
-          cloud_sampled, radius * sigmaP, makePointNormal,
-          [apss = APSS(cloud_sampled, pss_scale)](const auto &p) {
-            return project_iterative(apss, p);
-          },
-          resampling_iterations);
-
-      subsampled = draw::drawPointCloud("subsampled", cloud_sampled);
-      log_point_cloud_stats(cloud_sampled);
-    }
-
-    ImGui::Combo("PSE shape", &selected_pse, pse_shapes, 4);
-    ImGui::Combo("Morphological operation", &selected_morphology_op,
-                 morphology_operations, 2);
 
     using namespace structuring_elements;
     const auto se_op = std::array{Operation::Dilation,
@@ -482,23 +468,6 @@ int main(int argc, char **argv) {
       return se_project_iterative(original_apss, p, sdf, pse_scale, 100, 1e-4f);
     };
 
-    if (ImGui::Button("Dense sampling")) {
-      const auto denseSampling = morphology::detail::sampleBoxVolume(
-          bounds, sigmaP, [&](const auto &sample) {
-            auto dist = original_apss.evaluate_surface(sample);
-
-            if (se_op == Erosion) {
-              dist += pse_scale; // Sample close to dilation surface
-            } else if (se_op == Dilation) {
-              dist -= pse_scale;
-            }
-
-            return std::abs(dist) > 2 * sigmaP;
-          });
-
-      draw::drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
-    }
-
     const auto variational_dilation = [&](const auto &p) {
       const auto pse_distance =
           structuring_elements::fit(original_apss, p, sdf, pse_scale)
@@ -524,13 +493,69 @@ int main(int argc, char **argv) {
       return variational_dilation(p);
     };
 
-    if (ImGui::Button("Morphology (Variational)")) {
+    const auto params = ExperimentParams{
+        .pse_scale = pse_scale,
+        .pss_scale = pss_scale,
+        .sigmaP = sigmaP,
+        .sigmaN = sigmaN,
+        .resampling_iterations = resampling_iterations,
+        .grid_resolution = gridResolution,
+    };
 
-      draw::addVolumeGridByResolution("Morphology (Variational)", bounds,
-                                      variational_morphology, gridResolution);
+    const auto get_polyscope_data = [](polyscope::PointCloud *pc) {
+      const auto positions = std::vector(pc->points.data);
+
+      if (!pc->quantities.contains("normals")) {
+        return std::make_pair(
+            positions, std::vector<glm::vec3>(positions.size(), glm::vec3(0)));
+      }
+
+      auto *quant = dynamic_cast<polyscope::PointCloudVectorQuantity *>(
+          pc->getQuantity("normals"));
+
+      if (!quant) {
+        throw std::runtime_error(
+            "Quantity 'normals' is not a PointCloudVectorQuantity");
+      }
+
+      const auto normals = std::vector(quant->vectors.data);
+      return std::make_pair(positions, normals);
+    };
+
+    const bool has_selection = polyscope::haveSelection();
+    const bool has_cloud_selection =
+        has_selection &&
+        polyscope::getSelection().structureType == "Point Cloud";
+
+    ImGui::SeparatorText("Sampling");
+
+    if (ImGui::Button("Subsample", rest_width)) {
+      cloud_sampled = subsample(cloud, radius * sigmaP, makePointNormal);
+      subsampled = draw::drawPointCloud("subsampled", cloud_sampled);
+      log_point_cloud_stats(cloud_sampled);
     }
 
-    if (ImGui::Button("Morphology (Sampled)")) {
+    ImGui::InputInt("Iterations", &resampling_iterations);
+    ImGui::SetItemTooltip("Resampling iterations.");
+
+    if (ImGui::Button("Resample", rest_width)) {
+      cloud_sampled = resample(
+          cloud_sampled, radius * sigmaP, makePointNormal,
+          [apss = APSS(cloud_sampled, pss_scale)](const auto &p) {
+            return project_iterative(apss, p);
+          },
+          resampling_iterations);
+
+      subsampled = draw::drawPointCloud("subsampled", cloud_sampled);
+      log_point_cloud_stats(cloud_sampled);
+    }
+
+    ImGui::SeparatorText("Morphology");
+
+    ImGui::Combo("Operation", &selected_morphology_op, morphology_operations,
+                 2);
+
+    if (ImGui::Button("Sampled", half_width())) {
 
       const auto morphology_pointcloud =
           morph(original_apss, bounds, sdf, sigmaP, pse_scale);
@@ -638,29 +663,76 @@ int main(int argc, char **argv) {
           gridResolution);
     }
 
-    const auto params = ExperimentParams{
-        .pse_scale = pse_scale,
-        .pss_scale = pss_scale,
-        .sigmaP = sigmaP,
-        .sigmaN = sigmaN,
-        .resampling_iterations = resampling_iterations,
-        .grid_resolution = gridResolution,
-    };
+    ImGui::SameLine();
+    if (ImGui::Button("Variational", rest_width)) {
 
-    if (ImGui::Button("Closing")) {
-
-      auto dilated = runMorphOp<Dilation>(cloud_sampled, params, sdf);
-      auto opening = runMorphOp<Erosion>(dilated, params, sdf);
-      draw::drawPointCloud("Closing", opening);
+      draw::addVolumeGridByResolution("Morphology (Variational)", bounds,
+                                      variational_morphology, gridResolution);
     }
-    if (ImGui::Button("Opening")) {
+
+    if (ImGui::Button("Opening", half_width())) {
 
       auto eroded = runMorphOp<Erosion>(cloud_sampled, params, sdf);
       auto closing = runMorphOp<Dilation>(eroded, params, sdf);
       draw::drawPointCloud("Opening", closing);
     }
 
-    if (ImGui::Button("Feature detection")) {
+    ImGui::SameLine();
+    if (ImGui::Button("Closing", rest_width)) {
+
+      auto dilated = runMorphOp<Dilation>(cloud_sampled, params, sdf);
+      auto opening = runMorphOp<Erosion>(dilated, params, sdf);
+      draw::drawPointCloud("Closing", opening);
+    }
+
+    ImGui::SeparatorText("Surface");
+
+    ImGui::BeginDisabled(!has_cloud_selection);
+    if (ImGui::Button("Show PSS", rest_width)) {
+
+      const auto sel = polyscope::getSelection();
+      const auto [positions, normals] =
+          get_polyscope_data(polyscope::getPointCloud(sel.structureName));
+      const auto fetched_point_cloud = PointCloud(positions, normals);
+
+      const auto pss_sdf =
+          [pss = APSS(fetched_point_cloud, pss_scale)](const auto &p) {
+            return pss.evaluate_surface(p);
+          };
+
+      if (pss_use_spacing) {
+        auto max = 101;
+        auto resolution = std::floor(max / sigmaP);
+
+        draw::addVolumeGridByResolution("PSS", bounds, pss_sdf, resolution);
+      } else {
+        draw::addVolumeGridByResolution("PSS", bounds, pss_sdf, gridResolution);
+      }
+    }
+    ImGui::EndDisabled();
+
+    if (!ImGui::CollapsingHeader("Debug")) {
+      return;
+    }
+    if (ImGui::Button("Dense sampling", half_width())) {
+      const auto denseSampling = morphology::detail::sampleBoxVolume(
+          bounds, sigmaP, [&](const auto &sample) {
+            auto dist = original_apss.evaluate_surface(sample);
+
+            if (se_op == Erosion) {
+              dist += pse_scale; // Sample close to dilation surface
+            } else if (se_op == Dilation) {
+              dist -= pse_scale;
+            }
+
+            return std::abs(dist) > 2 * sigmaP;
+          });
+
+      draw::drawPointCloud("dense sampling", denseSampling)->setEnabled(false);
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Features", rest_width)) {
       const auto edge_sampling = subsample(
           edge_sample(cloud_sampled, morphological_iterative_projection),
           radius * sigmaP, makePointNormal);
@@ -668,7 +740,7 @@ int main(int argc, char **argv) {
       draw::drawPointCloud("Edge sampling", edge_sampling);
     }
 
-    if (ImGui::Button("Show gradients")) {
+    if (ImGui::Button("Gradients", half_width())) {
       auto pc = polyscope::getPointCloud("subsampled");
 
       std::vector<glm::vec3> gradients;
@@ -680,7 +752,8 @@ int main(int argc, char **argv) {
       pc->addVectorQuantity("gradients", gradients)->setEnabled(true);
     }
 
-    if (ImGui::Button("Project all iteratively")) {
+    ImGui::SameLine();
+    if (ImGui::Button("Project all", rest_width)) {
 
       std::vector<glm::vec3> positions;
       std::vector<glm::vec3> normals;
@@ -693,33 +766,23 @@ int main(int argc, char **argv) {
       draw::drawPointCloud("projected", PointCloud(positions, normals));
     }
 
-    if (!polyscope::haveSelection()) {
+    ImGui::Checkbox("Point/normal embedding",
+                    &sampling_compute_pointnormal_embedding);
+    ImGui::SetItemTooltip(
+        "Compute sampling using the point and normal embedding.");
+    ImGui::InputFloat("MS neighbours", &mean_shift_search_radius);
+    ImGui::SetItemTooltip("Mean shift neighbourhood radius.");
+
+    ImGui::SeparatorText("Selection");
+
+    if (!has_selection) {
+      ImGui::TextDisabled("Nothing selected.");
       return;
     }
 
     const auto sel = polyscope::getSelection();
 
-    const auto get_polyscope_data = [](polyscope::PointCloud *pc) {
-      const auto positions = std::vector(pc->points.data);
-
-      if (!pc->quantities.contains("normals")) {
-        return std::make_pair(
-            positions, std::vector<glm::vec3>(positions.size(), glm::vec3(0)));
-      }
-
-      auto *quant = dynamic_cast<polyscope::PointCloudVectorQuantity *>(
-          pc->getQuantity("normals"));
-
-      if (!quant) {
-        throw std::runtime_error(
-            "Quantity 'normals' is not a PointCloudVectorQuantity");
-      }
-
-      const auto normals = std::vector(quant->vectors.data);
-      return std::make_pair(positions, normals);
-    };
-
-    if (ImGui::Button("Save pointcloud")) {
+    if (ImGui::Button("Save pointcloud", rest_width)) {
       if (sel.structureType == "Point Cloud") {
         auto pc = polyscope::getPointCloud(sel.structureName);
         const auto [positions, normals] = get_polyscope_data(pc);
@@ -742,40 +805,7 @@ int main(int argc, char **argv) {
       }
     }();
 
-    // if (ImGui::Button("Morphological: Project iteratively")) {
-    //   const auto pos = PointCloud::Position(sel.position);
-    //   const auto [new_p, new_n] =
-    //       structuring_elements::project_iterative<se_op>(
-    //           original_apss, pos, sdf, pss_scale, pse_scale);
-
-    //   const auto pse_orig_fit =
-    //       structuring_elements::fit(original_apss, pos, sdf, pse_scale);
-
-    //   const auto pc0 = drawPointCloud(
-    //       "Original Fitted center",
-    //       PointCloud({pse_orig_fit.c}, {pse_orig_fit.gradient(pos)}),
-    //       polyscope::PointRenderMode::Sphere);
-
-    //   const auto pse_fit =
-    //       structuring_elements::fit(original_apss, new_p, sdf, pse_scale);
-
-    //   const auto pc = drawPointCloud("Iterative projection result",
-    //                                  PointCloud({new_p}, {new_n}),
-    //                                  polyscope::PointRenderMode::Sphere);
-
-    //   const auto pc2 = drawPointCloud(
-    //       "Fitted center", PointCloud({pse_fit.c},
-    //       {pse_fit.gradient(new_p)}), polyscope::PointRenderMode::Sphere);
-
-    //   pc->setPointRadius(0.002);
-    //   pc2->setPointRadius(0.002);
-
-    //   std::cout << "project_iterative: distance = " << glm::distance(new_p,
-    //   pos)
-    //             << std::endl;
-    // }
-
-    if (ImGui::Button("Project iteratively")) {
+    if (ImGui::Button("Project iter.", half_width())) {
       const auto projection = [&original_apss](const auto &p, auto iter) {
         return project_iterative(original_apss, p, iter);
       };
@@ -791,23 +821,12 @@ int main(int argc, char **argv) {
       const auto pos = PointCloud::Position(sel.position);
       iterative_projection_debug_view(pos, projection, grad_distance);
     }
-    if (ImGui::Button("Project iteratively (Morphological)")) {
+    ImGui::SameLine();
+    if (ImGui::Button("Project iter. (morph.)", rest_width)) {
 
       const auto projection = [&](const auto &p, auto iter) {
         return se_project_iterative(original_apss, p, sdf, pse_scale, iter,
                                     1e-4f);
-      };
-      const auto variational_morphology = [&](const auto &p) {
-        const auto pse_distance =
-            structuring_elements::fit(original_apss, p, sdf, pse_scale)
-                .distance(p);
-        const auto apss_distance = original_apss.evaluate_surface(p, pss_scale);
-
-        if (se_op == structuring_elements::Erosion) {
-          return std::max(-pse_distance, apss_distance);
-        }
-
-        return std::min(pse_distance, apss_distance);
       };
 
       const auto grad_distance = [&](const auto &p) {
@@ -819,6 +838,20 @@ int main(int argc, char **argv) {
       iterative_projection_debug_view(pos, projection, grad_distance);
     }
 
+    if (ImGui::Button("Show PSE", rest_width)) {
+
+      auto PSE_bounds = ::detail::Bounds(p - glm::vec3(1, 1, 1) * pse_scale,
+                                         p + glm::vec3(1, 1, 1) * pse_scale);
+      draw::addVolumeGridByResolution(
+          "PSE", PSE_bounds,
+          [&](const auto &x) {
+            return structuring_elements::PointStructuringElement{pse_scale, p,
+                                                                 sdf}
+                .distance(x);
+          },
+          gridResolution);
+    }
+
     // Reconstruct selected pointcloud
     if (sel.structureType != "Point Cloud") {
       return;
@@ -828,7 +861,7 @@ int main(int argc, char **argv) {
     const auto [positions, normals] = get_polyscope_data(pc);
     const auto fetched_point_cloud = PointCloud(positions, normals);
 
-    if (ImGui::Button("Importance debug view")) {
+    if (ImGui::Button("Importance", half_width())) {
 
       importance_debug_view(
           fetched_point_cloud, makePointNormal,
@@ -838,7 +871,8 @@ int main(int argc, char **argv) {
           p, n, false);
     }
 
-    if (ImGui::Button("Show curvature")) {
+    ImGui::SameLine();
+    if (ImGui::Button("Curvature", rest_width)) {
 
       std::vector<float> curvature;
       for (auto i = 0; i < positions.size(); i++) {
@@ -847,7 +881,8 @@ int main(int argc, char **argv) {
       pc->addScalarQuantity("curvature", curvature)->setEnabled(true);
     }
 
-    if (ImGui::Button("(Morphological) Importance debug view")) {
+    ImGui::SameLine();
+    if (ImGui::Button("Importance (morph.)", rest_width)) {
 
       const auto makePointCentroid = [sigmaC = sigmaC, sdf = sdf,
                                       &pss = original_apss](const auto &p,
@@ -865,38 +900,7 @@ int main(int argc, char **argv) {
           p, n, true);
     }
 
-    if (ImGui::Button("Show PSE")) {
-
-      auto PSE_bounds = ::detail::Bounds(p - glm::vec3(1, 1, 1) * pse_scale,
-                                         p + glm::vec3(1, 1, 1) * pse_scale);
-      draw::addVolumeGridByResolution(
-          "PSE", PSE_bounds,
-          [&](const auto &x) {
-            return structuring_elements::PointStructuringElement{pse_scale, p,
-                                                                 sdf}
-                .distance(x);
-          },
-          gridResolution);
-    }
-
-    if (ImGui::Button("Show PSS")) {
-
-      const auto pss_sdf = [pss = APSS(fetched_point_cloud, pss_scale),
-                            &pss_scale = pss_scale](const auto &p) {
-        return pss.evaluate_surface(p);
-      };
-
-      if (pss_use_spacing) {
-        auto max = 101;
-        auto resolution = std::floor(max / sigmaP);
-
-        draw::addVolumeGridByResolution("PSS", bounds, pss_sdf, resolution);
-      } else {
-        draw::addVolumeGridByResolution("PSS", bounds, pss_sdf, gridResolution);
-      }
-    }
-
-    if (ImGui::Button("Show centroids")) {
+    if (ImGui::Button("Centroids", half_width())) {
 
       std::vector<glm::vec3> centroids;
       for (const auto &p : fetched_point_cloud.positions) {
@@ -906,7 +910,7 @@ int main(int argc, char **argv) {
       draw::drawPointCloud("centroids", centroids);
     }
 
-    if (ImGui::Button("Mean shift")) {
+    if (ImGui::Button("Mean shift", rest_width)) {
       // We aim to minimize (9)
 
       const auto neighbours = [&, pse_scale = mean_shift_search_radius]() {
