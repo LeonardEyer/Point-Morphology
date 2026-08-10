@@ -1,0 +1,23 @@
+name: Deploy docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".forgejo/workflows/pages.yaml"
+
+jobs:
+  deploy:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      # `token` is filled in by Forgejo Actions and is what authorizes this
+      # workflow to publish to the site above -- no secret to configure.
+      - uses: https://codeberg.org/git-pages/action@v2
+        with:
+          site: https://${{ forge.repository_owner }}.codeberg.page/Point-Morphology/
+          token: ${{ forge.token }}
+          source: docs/
