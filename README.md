@@ -6,10 +6,10 @@ A full write-up with the math and results lives [here](https://leonardeyer.codeb
 
 <table>
   <tr>
-    <td><img src="docs/images/hand-dilation-cube.png" width="100%" /></td>
-    <td><img src="docs/images/bunny-erosion-sphere.png" width="100%" /></td>
-    <td><img src="docs/images/dragon-opening-cube.png" width="100%" /></td>
-    <td><img src="docs/images/hand-dilation-hand-1.png" width="100%" /></td>
+    <td><img src="docs/images/hand-dilation-cube.webp" width="100%" /></td>
+    <td><img src="docs/images/bunny-erosion-sphere.webp" width="100%" /></td>
+    <td><img src="docs/images/dragon-opening-cube.webp" width="100%" /></td>
+    <td><img src="docs/images/hand-dilation-hand-1.webp" width="100%" /></td>
   </tr>
   <tr>
       <td>Dilation: cube</td>
